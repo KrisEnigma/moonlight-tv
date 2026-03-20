@@ -68,8 +68,6 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     config->absmouse = true;
     config->virtual_mouse = false;
     config->hdr = false;
-    config->hdr_hlg = false;
-    config->hdr_10_plus = false;
     config->hevc = true;
     config->av1 = false;
     config->yuv422 = false;
@@ -126,8 +124,6 @@ bool settings_save(app_settings_t *config) {
     ini_write_section(fp, "video");
     ini_write_string(fp, "decoder", config->decoder);
     ini_write_bool(fp, "hdr", config->hdr);
-    ini_write_bool(fp, "hdr_hlg", config->hdr_hlg);
-    ini_write_bool(fp, "hdr_10_plus", config->hdr_10_plus);
     ini_write_bool(fp, "hevc", config->hevc);
     ini_write_bool(fp, "av1", config->av1);
     ini_write_bool(fp, "yuv422", config->yuv422);
@@ -232,10 +228,6 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         config->show_stats_compact = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("hdr")) {
         config->hdr = INI_IS_TRUE(value);
-    } else if (INI_NAME_MATCH("hdr_hlg")) {
-        config->hdr_hlg = INI_IS_TRUE(value);
-    } else if (INI_NAME_MATCH("hdr_10_plus")) {
-        config->hdr_10_plus = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("surround")) {
         config->stream.audioConfiguration = parse_audio_config(value);
     } else if (INI_NAME_MATCH("sops")) {

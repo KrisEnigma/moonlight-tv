@@ -295,16 +295,6 @@ static bool on_event(lv_fragment_t *self, int code, void *userdata) {
     streaming_controller_t *controller = (streaming_controller_t *) self;
     switch (code) {
         case USER_STREAM_CONNECTING: {
-#ifdef TARGET_WEBOS
-            /* Early display warmup before decoder is created - gives compositor time
-             * to switch to 120Hz before Starfish exported window is created. */
-            if (app_configuration->stream.fps >= 90) {
-                for (int i = 0; i < 5; i++) {
-                    SDL_PumpEvents();
-                    SDL_Delay(30);  /* ~150ms - before decoder/exported window created */
-                }
-            }
-#endif
             controller->progress = progress_dialog_create(locstr("Connecting..."));
             if (lv_obj_check_type(controller->progress->parent, &lv_msgbox_backdrop_class)) {
                 lv_obj_set_style_bg_opa(controller->progress->parent, LV_OPA_TRANSP, 0);

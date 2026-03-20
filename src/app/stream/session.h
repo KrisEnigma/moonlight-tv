@@ -57,8 +57,6 @@ typedef struct AUDIO_INFO {
 
 typedef struct session_config_t {
     STREAM_CONFIGURATION stream;
-    bool hdr_hlg;
-    bool hdr_10_plus;
     bool sops;
     bool view_only;
     bool local_audio;

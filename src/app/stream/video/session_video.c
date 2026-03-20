@@ -1,6 +1,7 @@
 #include "session_video.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "stream/session.h"
 
@@ -17,30 +18,13 @@
 #include <SDL.h>
 #include <assert.h>
 
-// 4MB for 4K 120fps HDR – large IDRs from P1/Vibepollo can exceed 2MB
-#define DECODER_BUFFER_SIZE (4096 * 1024)
-
-/*
- * Minimum interval between IDR (keyframe) requests sent to the host.
- *
- * When Starfish signals BufferFull, we would normally request an IDR immediately.
- * However, an IDR frame is 4-8× larger than a P-frame; feeding it fills the buffer
- * again, triggering another immediate IDR request – a runaway feedback loop.
- * Worse, IDR requests travel over the same TCP control channel as gamepad input,
- * so a flood of them directly increases perceived controller latency.
- *
- * Throttling to 1500 ms reduces control channel congestion, especially with
- * low-latency host presets (e.g. Nvidia P1) that produce higher throughput.
- * Subsequent frames are dropped silently; the stream self-heals within the
- * next few P-frames once the buffer drains.
- */
-#define IDR_REQUEST_MIN_INTERVAL_MS 1500
+// 2MB decode size should be fairly enough for everything
+#define DECODER_BUFFER_SIZE (2048 * 1024)
 
 static session_t *session = NULL;
 static SS4S_Player *player = NULL;
 static unsigned char *buffer = NULL;
 static int lastFrameNumber;
-static unsigned long lastIdrRequestMs = 0;
 static struct VIDEO_STATS vdec_temp_stats;
 static int vdec_stream_format = 0;
 VIDEO_STATS vdec_summary_stats;
@@ -60,19 +44,7 @@ DECODER_RENDERER_CALLBACKS ss4s_dec_callbacks = {
         .setup = vdec_delegate_setup,
         .cleanup = vdec_delegate_cleanup,
         .submitDecodeUnit = vdec_delegate_submit,
-        /*
-         * CAPABILITY_DIRECT_SUBMIT   – frames decoded on the calling thread; no queue overhead.
-         * CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC – disabled on webOS to force
-         *   maxNumReferenceFrames=1. Multi-ref (16 frames) increases decode time significantly
-         *   on webOS HW decoders; 1 ref targets 6–7 ms vs 11+ ms. Tradeoff: packet loss
-         *   requires full IDR instead of RFI. Acceptable on stable home networks.
-         * CAPABILITY_SLICES_PER_FRAME(1) – 1 slice minimizes decode overhead.
-         */
-        .capabilities = CAPABILITY_DIRECT_SUBMIT
-#if !defined(TARGET_WEBOS)
-                      | CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC
-#endif
-                      | CAPABILITY_SLICES_PER_FRAME(1),
+        .capabilities = CAPABILITY_DIRECT_SUBMIT,
 };
 
 static const char *video_format_name(int videoFormat) {
@@ -103,7 +75,6 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
     vdec_stream_format = videoFormat;
     vdec_stream_info.format = video_format_name(videoFormat);
     lastFrameNumber = 0;
-    lastIdrRequestMs = 0;
     SS4S_VideoInfo info = {
             .width = width,
             .height = height,
@@ -199,18 +170,7 @@ int vdec_delegate_submit(PDECODE_UNIT decodeUnit) {
         vdec_temp_stats.submittedFrames++;
         return DR_OK;
     } else if (result == SS4S_VIDEO_FEED_REQUEST_KEYFRAME) {
-        /*
-         * Throttle IDR requests: sending too many IDR requests in rapid succession
-         * floods the control channel (same TCP connection as gamepad input), causing
-         * high perceived controller latency. If we requested one recently, drop the
-         * frame silently instead – the stream recovers on its own once the buffer drains.
-         */
-        unsigned long now = SDL_GetTicks();
-        if (now - lastIdrRequestMs >= IDR_REQUEST_MIN_INTERVAL_MS) {
-            lastIdrRequestMs = now;
-            return DR_NEED_IDR;
-        }
-        return DR_OK;
+        return DR_NEED_IDR;
     } else {
         commons_log_error("Session", "Video feed error %d", result);
         session_interrupt(session, false, STREAMING_INTERRUPT_DECODER);
@@ -223,10 +183,10 @@ void vdec_stat_submit(const struct VIDEO_STATS *src, unsigned long now) {
     memcpy(dst, src, sizeof(struct VIDEO_STATS));
     unsigned long delta = now - dst->measurementStartTimestamp;
     if (delta <= 0) { return; }
-    dst->currentBitrateKbps = (uint32_t) ((dst->receivedBytes * 8) / (delta / 1000.0f));
     dst->totalFps = (float) dst->totalFrames / ((float) delta / 1000);
     dst->receivedFps = (float) dst->receivedFrames / ((float) delta / 1000);
     dst->decodedFps = (float) dst->submittedFrames / ((float) delta / 1000);
+    dst->currentBitrateKbps = (uint32_t) ((dst->receivedBytes * 8) / (delta / 1000.0f));
     LiGetEstimatedRttInfo(&dst->rtt, &dst->rttVariance);
     if (!streaming_stats_shown()) {
         return;

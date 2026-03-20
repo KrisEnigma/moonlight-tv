@@ -47,9 +47,7 @@ typedef struct app_settings_t {
     bool virtual_mouse;
     bool swap_abxy;
     bool syskey_capture;
-    bool hdr;
-    bool hdr_hlg;   /* HLG instead of HDR10 (PQ) – for broadcast/streaming content */
-    bool hdr_10_plus; /* HDR10+ when host sends HDR10; may improve HLG-like display on LG */
+    bool hdr;   /* HDR10 (PQ) over HEVC Main10 when host and decoder support it */
     bool hevc;
     bool av1;
     bool yuv422;

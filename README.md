@@ -16,7 +16,7 @@ It was created to push the limits of LG C1 (and similar OLEDs) in 4K 120fps HDR 
 - Full keyboard overlay
 - Compact real-time performance indicator
 - **Max bitrate: 300 Mbps** (use sparingly; see warning below)
-- Experimental **HLG HDR** support (broadcast/streaming)
+- **HDR10 (PQ)** over HEVC Main10 when the host sends HDR (HLG, HDR10+, and Dolby Vision are not used)
 
 ## ⚠️ Bitrate warning
 
@@ -40,10 +40,9 @@ The bitrate limit is set to **300 Mbps**. High bitrates stress the TV’s WiFi a
 
 ## Fork adjustments
 
-- **HLG HDR** – Experimental option to use HLG instead of HDR10 (PQ), common in broadcast/streaming
 - **300 Mbps** – Raised bitrate limit; use responsibly
-- **1 slice per frame** – Reduces webOS decoder load
-- **4 MB buffer** – Fewer stalls with large IDRs at 4K 120fps
+- **Video pipeline** – Frame pacing and decoding path aligned with upstream [mariotaku/moonlight-tv](https://github.com/mariotaku/moonlight-tv) (same ss4s submodule baseline)
+- **HDR** – Starfish is signaled as **HDR10** only (no HLG / HDR10+ / Dolby Vision paths)
 
 ## Documentation
 
