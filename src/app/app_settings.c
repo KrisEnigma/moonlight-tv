@@ -68,6 +68,7 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     config->absmouse = true;
     config->virtual_mouse = false;
     config->hdr = false;
+    config->video_tight_sync = false;
     config->hevc = true;
     config->av1 = false;
     config->yuv422 = false;
@@ -124,6 +125,7 @@ bool settings_save(app_settings_t *config) {
     ini_write_section(fp, "video");
     ini_write_string(fp, "decoder", config->decoder);
     ini_write_bool(fp, "hdr", config->hdr);
+    ini_write_bool(fp, "tight_display_sync", config->video_tight_sync);
     ini_write_bool(fp, "hevc", config->hevc);
     ini_write_bool(fp, "av1", config->av1);
     ini_write_bool(fp, "yuv422", config->yuv422);
@@ -228,6 +230,8 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         config->show_stats_compact = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("hdr")) {
         config->hdr = INI_IS_TRUE(value);
+    } else if (INI_FULL_MATCH("video", "tight_display_sync")) {
+        config->video_tight_sync = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("surround")) {
         config->stream.audioConfiguration = parse_audio_config(value);
     } else if (INI_NAME_MATCH("sops")) {

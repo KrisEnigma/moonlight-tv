@@ -48,6 +48,11 @@ typedef struct app_settings_t {
     bool swap_abxy;
     bool syskey_capture;
     bool hdr;   /* HDR10 (PQ) over HEVC Main10 when host and decoder support it */
+    /**
+     * webOS Starfish: nominal-frame PTS pacing + small negative presentation offset
+     * for tighter vsync without adding latency when the stream runs late.
+     */
+    bool video_tight_sync;
     bool hevc;
     bool av1;
     bool yuv422;

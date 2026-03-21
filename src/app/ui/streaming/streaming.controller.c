@@ -51,6 +51,29 @@ static void update_buttons_layout(streaming_controller_t *controller);
 
 static void pin_toggle(lv_event_t *e);
 
+/** Pretty codec label for stats (matches session_video video_format_name strings). */
+static const char *streaming_codec_display(const char *fmt) {
+    if (fmt == NULL || fmt[0] == '\0') {
+        return "-";
+    }
+    if (strcmp(fmt, "H264") == 0) {
+        return "H.264";
+    }
+    if (strcmp(fmt, "H265") == 0) {
+        return "H.265";
+    }
+    if (strcmp(fmt, "H265 10bit") == 0) {
+        return "H.265 10bit";
+    }
+    if (strcmp(fmt, "AV1 8bit") == 0) {
+        return "AV1";
+    }
+    if (strcmp(fmt, "AV1 10bit") == 0) {
+        return "AV1 10bit";
+    }
+    return fmt;
+}
+
 static void network_test_timer_cb(lv_timer_t *timer) {
     streaming_controller_t *controller = (streaming_controller_t *) timer->user_data;
     if (!controller) {
@@ -147,7 +170,7 @@ bool streaming_refresh_stats() {
     const struct VIDEO_INFO *info = &vdec_stream_info;
 
     if (controller->stats_compact_label != NULL) {
-        /* Format: 3840x2160 HDR 120/60 N 1/3ms H 4ms D 8ms TL 13ms FD 0.00% H.265 */
+        /* Format: 3840×2160 HDR H.265 10bit FPS 120 N 1/3ms H 4ms D 8ms TL 13ms FD 0.00% 45.0 Mbps */
         float renderFps = dst->decodedFps;
         int displayRate = 60;
 #if defined(TARGET_WEBOS)
@@ -179,16 +202,16 @@ bool streaming_refresh_stats() {
         float fdPct = (dst->totalFrames > 0)
             ? (float) dst->networkDroppedFrames / (float) dst->totalFrames * 100.0f
             : 0.0f;
-        const char *codec = vdec_stream_info.format ? vdec_stream_info.format : "-";
+        const char *codec = streaming_codec_display(vdec_stream_info.format);
         int w = info->width > 0 ? info->width : 0;
         int h = info->height > 0 ? info->height : 0;
         const char *hdr_str = app_configuration->hdr ? "HDR" : "SDR";
         float bitrateMbps = (float) dst->currentBitrateKbps / 1000000.0f;
         lv_label_set_text_fmt(controller->stats_compact_label,
-                              "%dx%d %s %.0f N %u/%ums H %.0fms D %.0fms TL %.0fms FD %.2f%% %s %.1f Mbps",
-                              w, h, hdr_str, renderFps,
+                              "%d\u00d7%d %s %s FPS %.0f N %u/%ums H %.0fms D %.0fms TL %.0fms FD %.2f%% %.1f Mbps",
+                              w, h, hdr_str, codec, renderFps,
                               (unsigned) dst->rtt, (unsigned) dst->rttVariance,
-                              hostMs, decMs, totalMs, fdPct, codec, bitrateMbps);
+                              hostMs, decMs, totalMs, fdPct, bitrateMbps);
         /* Quality dot: green ≤25ms, yellow ≤30ms, red >30ms */
         if (controller->stats_quality_indicator) {
             lv_color_t qc = totalMs <= 25.0f ? lv_palette_main(LV_PALETTE_GREEN)
@@ -199,11 +222,13 @@ bool streaming_refresh_stats() {
         return true;
     }
 
+    const char *hdr_str = app_configuration->hdr ? "HDR" : "SDR";
+    const char *codec = streaming_codec_display(vdec_stream_info.format);
     if (info->width > 0 && info->height > 0) {
-        lv_label_set_text_fmt(controller->stats_items.decoder, "%s, %d\u00d7%d (%s)", vdec_stream_info.format, info->width,
-                              info->height, SS4S_ModuleInfoGetId(app->ss4s.selection.video_module));
+        lv_label_set_text_fmt(controller->stats_items.decoder, "%d\u00d7%d %s %s (%s)", info->width, info->height, hdr_str,
+                              codec, SS4S_ModuleInfoGetId(app->ss4s.selection.video_module));
     } else {
-        lv_label_set_text_fmt(controller->stats_items.decoder, "%s (%s)", vdec_stream_info.format,
+        lv_label_set_text_fmt(controller->stats_items.decoder, "%s %s (%s)", codec, hdr_str,
                               SS4S_ModuleInfoGetId(app->ss4s.selection.video_module));
     }
     lv_label_set_text_fmt(controller->stats_items.audio, "%s, %s (%s)", audio_stream_info.format,

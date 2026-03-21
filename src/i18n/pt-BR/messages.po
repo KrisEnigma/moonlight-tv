@@ -601,3 +601,29 @@ msgstr "Fechar o jogo"
 msgid "Performance"
 msgstr "Desempenho"
 
+#: src/app/ui/launcher/launcher.view.c
+msgid "Game streaming"
+msgstr "Streaming de jogos"
+
+#: src/app/ui/launcher/apps.controller.c
+msgid "Games on this PC"
+msgstr "Jogos neste PC"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Smooth playback (TV)"
+msgstr "Reprodução suave (TV)"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Tight display sync"
+msgstr "Sincronização rígida com o display"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Starfish: PTS follows nominal frame rate and catches up to real time when late, "
+"plus a small earlier presentation hint — stronger vsync without extra decode work. "
+"Restart stream after changing."
+msgstr ""
+"Starfish: PTS segue a cadência nominal e alinha ao tempo real quando atrasado, "
+"com um pequeno avanço na apresentação — vsync mais firme sem custo extra no decode. "
+"Reinicie o stream após alterar."
+

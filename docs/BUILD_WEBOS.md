@@ -10,6 +10,7 @@ This guide explains how to enable developer mode on the TV, build Aurora, and in
 2. [Manual installation](#2-manual-installation)
 3. [Build](#3-build)
 4. [Troubleshooting](#4-troubleshooting)
+5. [webOS Homebrew (catalog)](#5-webos-homebrew-catalog)
 
 ---
 
@@ -201,3 +202,9 @@ The buildroot-nc4 SDK includes pbnjson_c, PmLogLib, webosi18n, etc. If something
 - TV and PC on the same network
 - Developer mode enabled on the TV
 - Firewall not blocking the ares-cli port
+
+---
+
+## 5. webOS Homebrew catalog
+
+To list **Aurora** in the [Homebrew Channel](https://webosbrew.org/) app store ([repo.webosbrew.org](https://repo.webosbrew.org/)), submit a PR to [webosbrew/apps-repo](https://github.com/webosbrew/apps-repo) using [`deploy/webosbrew/com.aurora.gamestream.yml`](../deploy/webosbrew/com.aurora.gamestream.yml) and the checklist in **[WEBOS_HOMEBREW.md](WEBOS_HOMEBREW.md)**.

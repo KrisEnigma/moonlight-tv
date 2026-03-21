@@ -606,3 +606,26 @@ msgstr ""
 #: src/app/ui/streaming/streaming.view.c:120
 msgid "Performance"
 msgstr ""
+
+#: src/app/ui/launcher/launcher.view.c
+msgid "Game streaming"
+msgstr ""
+
+#: src/app/ui/launcher/apps.controller.c
+msgid "Games on this PC"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Smooth playback (TV)"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Tight display sync"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Starfish: PTS follows nominal frame rate and catches up to real time when late, "
+"plus a small earlier presentation hint — stronger vsync without extra decode work. "
+"Restart stream after changing."
+msgstr ""

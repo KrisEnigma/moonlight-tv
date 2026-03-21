@@ -120,6 +120,18 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
     lv_obj_add_event_cb(hdr_checkbox, hdr_state_update_cb, LV_EVENT_VALUE_CHANGED, controller);
     lv_obj_add_event_cb(hdr_more, hdr_more_click_cb, LV_EVENT_CLICKED, NULL);
 
+#if TARGET_WEBOS
+    pref_header(view, locstr("Smooth playback (TV)"));
+    lv_obj_t *tight_cb =
+            pref_checkbox(view, locstr("Tight display sync"), &app_configuration->video_tight_sync, false);
+    pref_desc_label(view,
+                     locstr("Starfish: PTS follows nominal frame rate and catches up to real time when late, "
+                            "plus a small earlier presentation hint — stronger vsync without extra decode work. "
+                            "Restart stream after changing."),
+                     false);
+    lv_obj_add_event_cb(tight_cb, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
+#endif
+
     return view;
 }
 

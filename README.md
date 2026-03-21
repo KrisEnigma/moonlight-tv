@@ -17,6 +17,7 @@ It was created to push the limits of LG C1 (and similar OLEDs) in 4K 120fps HDR 
 - Compact real-time performance indicator
 - **Max bitrate: 300 Mbps** (use sparingly; see warning below)
 - **HDR10 (PQ)** over HEVC Main10 when the host sends HDR (HLG, HDR10+, and Dolby Vision are not used)
+- **Tight display sync** (webOS) — optional in **Settings → Video**; see *Fork adjustments*
 
 ## ⚠️ Bitrate warning
 
@@ -43,18 +44,27 @@ The bitrate limit is set to **300 Mbps**. High bitrates stress the TV’s WiFi a
 - **300 Mbps** – Raised bitrate limit; use responsibly
 - **Video pipeline** – Frame pacing and decoding path aligned with upstream [mariotaku/moonlight-tv](https://github.com/mariotaku/moonlight-tv) (same ss4s submodule baseline)
 - **HDR** – Starfish is signaled as **HDR10** only (no HLG / HDR10+ / Dolby Vision paths)
+- **Tight display sync** (webOS, optional) — Starfish video PTS follows the **nominal stream frame rate** and **catches up to wall-clock time** when the stream runs late, so you get steadier vsync without adding latency when you are already behind. A small negative presentation offset (~12 ms) nudges output slightly earlier toward the panel. Toggle under **Settings → Video → Smooth playback (TV)**; restart streaming after changing. INI: `[video] tight_display_sync=`.
 
 ## Documentation
 
 - **[Build and installation (webOS)](docs/BUILD_WEBOS.md)** – Developer mode, build, and manual installation
+- **[webOS Homebrew catalog](docs/WEBOS_HOMEBREW.md)** – How to submit Aurora to [webosbrew/apps-repo](https://github.com/webosbrew/apps-repo) (Homebrew Channel)
 
-## Tested (LG C1)
+## Tested on LG OLED (webOS)
 
-- 4K 120fps HDR, H.265, ~180 Mbps
-- Total latency: ~22 ms (network 3–7 ms, decode 8–10 ms, host ~5 ms)
+### LG C1
+
+- 4K 120fps HDR, H.265, ~230 Mbps
+- Decoding Lattency: ~10 ms (network 1/2 ms, decode 8–10 ms, host ~4 ms)
 - Controllers tested:
   - Xbox Series S – rumble working
   - 8BitDo Ultimate (Bluetooth, D-Input) – low latency, rumble not supported by TV
+
+### LG C5
+
+- 4K 120fps HDR, H.265, **300 Mbps** — average **decoder latency ~10 ms** in practice under that profile
+- Playable without issues for demanding titles (e.g. **Tony Hawk’s Pro Skater 3 + 4** remake) and for lighter or older ports (e.g. **Mega Man X5**)
 
 ## License and credits
 

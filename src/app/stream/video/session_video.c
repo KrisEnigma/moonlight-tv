@@ -1,7 +1,10 @@
 #include "session_video.h"
 
+#include "config.h"
+
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "stream/session.h"
 
@@ -20,6 +23,11 @@
 
 // 2MB decode size should be fairly enough for everything
 #define DECODER_BUFFER_SIZE (2048 * 1024)
+
+/** webOS tight sync: small negative PTS shift (ms) toward panel vsync. */
+#define TIGHT_SYNC_PRESENTATION_OFFSET_MS (-12)
+
+static int vdec_stream_target_fps = 60;
 
 static session_t *session = NULL;
 static SS4S_Player *player = NULL;
@@ -65,7 +73,6 @@ static const char *video_format_name(int videoFormat) {
 }
 
 int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, void *context, int drFlags) {
-    (void) redrawRate;
     (void) drFlags;
     session = context;
     player = session->player;
@@ -75,12 +82,20 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
     vdec_stream_format = videoFormat;
     vdec_stream_info.format = video_format_name(videoFormat);
     lastFrameNumber = 0;
-    SS4S_VideoInfo info = {
-            .width = width,
-            .height = height,
-            .frameRateNumerator = redrawRate,
-            .frameRateDenominator = 1,
-    };
+    vdec_stream_target_fps = redrawRate > 0 ? redrawRate : 60;
+
+    SS4S_VideoInfo info;
+    memset(&info, 0, sizeof(info));
+    info.width = width;
+    info.height = height;
+    info.frameRateNumerator = vdec_stream_target_fps;
+    info.frameRateDenominator = 1;
+#if TARGET_WEBOS
+    if (session->app->settings.video_tight_sync) {
+        info.tightFramePacing = true;
+        info.presentationOffsetMs = TIGHT_SYNC_PRESENTATION_OFFSET_MS;
+    }
+#endif
     switch (videoFormat) {
         case VIDEO_FORMAT_H264:
             info.codec = SS4S_VIDEO_H264;
