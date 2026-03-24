@@ -39,6 +39,13 @@ The bitrate limit is set to **300 Mbps**. High bitrates stress the TV’s WiFi a
 
 *Values for H.265 (HEVC), HDR, near-visually-lossless quality. Above ~230 Mbps at 4K 120fps HDR, visual gains tend to be marginal.*
 
+## Performance notes
+
+- **HEVC / AV1 options** – With **Use H265** or **Use AV1** enabled in **Settings → Video**, the client negotiates **reference-frame invalidation (RFI)** and a **multi-slice** hint so the host can pipeline frames at high bitrate and frame rate (e.g. 4K 120). Disable a codec if your host or network misbehaves with these extensions.
+- **Stats overlay** – When the performance overlay is **hidden**, the app uses a **2 s** measurement window (instead of 1 s) and skips **RTT** queries and decoder-latency reads until you show stats again, to reduce overhead on the hot path.
+- **AV1 keyframe throttle** – Under **Settings → Video → Advanced** (when AV1 is supported), you can set the **minimum interval (ms)** between keyframe requests after `SS4S_VIDEO_FEED_REQUEST_KEYFRAME`. INI: `[video] av1_idr_request_min_interval_ms=` (250–10000; default 1000). Reconnect the stream after changing.
+- **Zero-copy decode** – Frames are still **assembled into a staging buffer** before `SS4S_PlayerVideoFeed`. True zero-copy would need **SS4S / platform API** support for scatter-gather or imported buffers (future work).
+
 ## Fork adjustments
 
 - **300 Mbps** – Raised bitrate limit; use responsibly

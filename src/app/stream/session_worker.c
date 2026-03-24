@@ -61,7 +61,7 @@ int session_worker(session_t *session) {
     SS4S_PlayerSetViewportSize(session->player, app->ui.width, app->ui.height);
     SS4S_PlayerSetUserdata(session->player, app);
 
-    session_video_prepare_stream(app->settings.av1);
+    session_video_prepare_stream();
 
     int startResult = LiStartConnection(&server->serverInfo, &session->config.stream,
                                         session_connection_callbacks_prepare(session),

@@ -71,6 +71,7 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     config->video_tight_sync = false;
     config->hevc = true;
     config->av1 = false;
+    config->av1_idr_request_min_interval_ms = 1000;
     config->yuv422 = false;
     config->show_stats_on_start = false;
     config->show_stats_compact = false;
@@ -128,6 +129,7 @@ bool settings_save(app_settings_t *config) {
     ini_write_bool(fp, "tight_display_sync", config->video_tight_sync);
     ini_write_bool(fp, "hevc", config->hevc);
     ini_write_bool(fp, "av1", config->av1);
+    ini_write_int(fp, "av1_idr_request_min_interval_ms", config->av1_idr_request_min_interval_ms);
     ini_write_bool(fp, "yuv422", config->yuv422);
     ini_write_bool(fp, "show_stats_on_start", config->show_stats_on_start);
     ini_write_bool(fp, "show_stats_compact", config->show_stats_compact);
@@ -222,6 +224,13 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         config->hevc = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("av1")) {
         config->av1 = INI_IS_TRUE(value);
+    } else if (INI_FULL_MATCH("video", "av1_idr_request_min_interval_ms")) {
+        set_int(&config->av1_idr_request_min_interval_ms, value);
+        if (config->av1_idr_request_min_interval_ms < 250) {
+            config->av1_idr_request_min_interval_ms = 250;
+        } else if (config->av1_idr_request_min_interval_ms > 10000) {
+            config->av1_idr_request_min_interval_ms = 10000;
+        }
     } else if (INI_NAME_MATCH("yuv422")) {
         config->yuv422 = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("show_stats_on_start")) {

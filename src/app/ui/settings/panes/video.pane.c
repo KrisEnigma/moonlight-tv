@@ -117,6 +117,19 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
                               SS4S_ModuleInfoGetName(app->ss4s.selection.video_module));
     }
 
+    if (app->ss4s.video_cap.codecs & SS4S_VIDEO_AV1) {
+        pref_header(view, locstr("Advanced"));
+        pref_title_label(view, locstr("AV1 keyframe request interval (ms)"));
+        lv_obj_t *idr_slider =
+                pref_slider(view, &app_configuration->av1_idr_request_min_interval_ms, 250, 10000, 50);
+        pref_desc_label(view,
+                        locstr("Minimum time between decoder requests for a new keyframe from the host. Lower may "
+                               "recover faster after decode errors; higher reduces control-channel traffic. Reconnect "
+                               "stream to apply."),
+                        false);
+        lv_obj_add_event_cb(idr_slider, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
+    }
+
     lv_obj_t *hdr_checkbox = pref_checkbox(view, locstr("HDR"), &app_configuration->hdr, false);
     lv_obj_t *hdr_hint = pref_desc_label(view, NULL, false);
     controller->hdr_checkbox = hdr_checkbox;

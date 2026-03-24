@@ -55,6 +55,8 @@ typedef struct app_settings_t {
     bool video_tight_sync;
     bool hevc;
     bool av1;
+    /** Min ms between AV1 DR_NEED_IDR requests (decoder keyframe); avoids control-channel storms. */
+    int av1_idr_request_min_interval_ms;
     bool yuv422;
     bool show_stats_on_start;
     bool show_stats_compact;

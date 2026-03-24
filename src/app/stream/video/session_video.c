@@ -2,6 +2,7 @@
 
 #include "config.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -24,11 +25,11 @@
 // 2MB decode size should be fairly enough for everything
 #define DECODER_BUFFER_SIZE (2048 * 1024)
 
-/** Min interval between IDR requests (AV1): avoids control-channel storms vs. gamepad input. */
-#define VDEC_IDR_REQUEST_MIN_INTERVAL_MS 1000
+/** Default min interval between AV1 IDR requests if settings are out of range. */
+#define VDEC_IDR_REQUEST_MIN_INTERVAL_DEFAULT_MS 1000
 
 /** Slices hint for pipeline decode while later slices still arrive (high bitrate / 120 Hz). */
-#define VDEC_AV1_SLICES_PER_FRAME 4
+#define VDEC_STREAM_SLICES_PER_FRAME 4
 
 /** webOS tight sync: small negative PTS shift (ms) toward panel vsync. */
 #define TIGHT_SYNC_PRESENTATION_OFFSET_MS (-12)
@@ -40,9 +41,11 @@ static SS4S_Player *player = NULL;
 static unsigned char *buffer = NULL;
 static int lastFrameNumber;
 static unsigned long last_idr_request_ms;
+static unsigned vdec_idr_min_interval_ms = VDEC_IDR_REQUEST_MIN_INTERVAL_DEFAULT_MS;
 static bool vdec_throttle_idr_requests;
 static struct VIDEO_STATS vdec_temp_stats;
 static int vdec_stream_format = 0;
+static bool vdec_warned_near_buffer_limit;
 VIDEO_STATS vdec_summary_stats;
 VIDEO_INFO vdec_stream_info;
 
@@ -63,13 +66,20 @@ DECODER_RENDERER_CALLBACKS ss4s_dec_callbacks = {
         .capabilities = CAPABILITY_DIRECT_SUBMIT,
 };
 
-void session_video_prepare_stream(bool av1_enabled) {
+void session_video_prepare_stream(void) {
     int caps = CAPABILITY_DIRECT_SUBMIT;
-    if (av1_enabled) {
+    const bool hevc = app_configuration != NULL && app_configuration->hevc;
+    const bool av1 = app_configuration != NULL && app_configuration->av1;
+    if (hevc) {
+        caps |= CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC;
+    }
+    if (av1) {
         caps |= CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
-        caps |= CAPABILITY_SLICES_PER_FRAME(VDEC_AV1_SLICES_PER_FRAME);
-        commons_log_info("Session", "AV1 streaming option: RFI + %u slices/frame for SDP negotiation",
-                         (unsigned) VDEC_AV1_SLICES_PER_FRAME);
+    }
+    if (hevc || av1) {
+        caps |= CAPABILITY_SLICES_PER_FRAME(VDEC_STREAM_SLICES_PER_FRAME);
+        commons_log_info("Session", "Video SDP caps: HEVC RFI=%d, AV1 RFI=%d, %u slices/frame",
+                         hevc ? 1 : 0, av1 ? 1 : 0, (unsigned) VDEC_STREAM_SLICES_PER_FRAME);
     }
     ss4s_dec_callbacks.capabilities = caps;
 }
@@ -103,7 +113,18 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
     lastFrameNumber = 0;
     last_idr_request_ms = 0;
     vdec_throttle_idr_requests = (videoFormat & VIDEO_FORMAT_MASK_AV1) != 0;
+    if (app_configuration != NULL) {
+        int ms = app_configuration->av1_idr_request_min_interval_ms;
+        if (ms >= 250 && ms <= 10000) {
+            vdec_idr_min_interval_ms = (unsigned) ms;
+        } else {
+            vdec_idr_min_interval_ms = VDEC_IDR_REQUEST_MIN_INTERVAL_DEFAULT_MS;
+        }
+    } else {
+        vdec_idr_min_interval_ms = VDEC_IDR_REQUEST_MIN_INTERVAL_DEFAULT_MS;
+    }
     vdec_stream_target_fps = redrawRate > 0 ? redrawRate : 60;
+    vdec_warned_near_buffer_limit = false;
 
     SS4S_VideoInfo info;
     memset(&info, 0, sizeof(info));
@@ -172,8 +193,8 @@ int vdec_delegate_submit(PDECODE_UNIT decodeUnit) {
         vdec_temp_stats.totalFrames += decodeUnit->frameNumber - (lastFrameNumber + 1);
         lastFrameNumber = decodeUnit->frameNumber;
     }
-    // Flip stats windows roughly every second
-    if (ticksms - vdec_temp_stats.measurementStartTimestamp > 1000) {
+    unsigned stats_window_ms = streaming_stats_shown() ? 1000u : 2000u;
+    if (ticksms - vdec_temp_stats.measurementStartTimestamp > stats_window_ms) {
         vdec_stat_submit(&vdec_temp_stats, ticksms);
 
         // Move this window into the last window slot and clear it for next window
@@ -188,10 +209,21 @@ int vdec_delegate_submit(PDECODE_UNIT decodeUnit) {
     vdec_temp_stats.totalCaptureLatency += decodeUnit->frameHostProcessingLatency;
     vdec_temp_stats.totalReassemblyTime += decodeUnit->enqueueTimeMs - decodeUnit->receiveTimeMs;
     vdec_stream_info.has_host_latency |= decodeUnit->frameHostProcessingLatency > 0;
+    if (!vdec_warned_near_buffer_limit && decodeUnit->fullLength > (DECODER_BUFFER_SIZE * 9 / 10)) {
+        vdec_warned_near_buffer_limit = true;
+        commons_log_warn("Session", "Video frame size %d is near decoder buffer limit (%d)",
+                         decodeUnit->fullLength, DECODER_BUFFER_SIZE);
+    }
     size_t length = 0;
-    for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
-        memcpy(buffer + length, entry->data, entry->length);
-        length += entry->length;
+    PLENTRY entry = decodeUnit->bufferList;
+    if (entry != NULL && entry->next == NULL) {
+        memcpy(buffer, entry->data, entry->length);
+        length = (size_t) entry->length;
+    } else {
+        for (; entry != NULL; entry = entry->next) {
+            memcpy(buffer + length, entry->data, entry->length);
+            length += entry->length;
+        }
     }
     SS4S_VideoFeedFlags flags = SS4S_VIDEO_FEED_DATA_FRAME_START | SS4S_VIDEO_FEED_DATA_FRAME_END;
     if (decodeUnit->frameType == FRAME_TYPE_IDR) {
@@ -208,7 +240,7 @@ int vdec_delegate_submit(PDECODE_UNIT decodeUnit) {
     } else if (result == SS4S_VIDEO_FEED_REQUEST_KEYFRAME) {
         if (vdec_throttle_idr_requests) {
             unsigned long now = SDL_GetTicks();
-            if (now - last_idr_request_ms < VDEC_IDR_REQUEST_MIN_INTERVAL_MS) {
+            if (now - last_idr_request_ms < vdec_idr_min_interval_ms) {
                 return DR_OK;
             }
             last_idr_request_ms = now;
@@ -230,8 +262,11 @@ void vdec_stat_submit(const struct VIDEO_STATS *src, unsigned long now) {
     dst->receivedFps = (float) dst->receivedFrames / ((float) delta / 1000);
     dst->decodedFps = (float) dst->submittedFrames / ((float) delta / 1000);
     dst->currentBitrateKbps = (uint32_t) ((dst->receivedBytes * 8) / (delta / 1000.0f));
-    LiGetEstimatedRttInfo(&dst->rtt, &dst->rttVariance);
-    if (!streaming_stats_shown()) {
+    const bool show_stats = streaming_stats_shown();
+    if (show_stats) {
+        LiGetEstimatedRttInfo(&dst->rtt, &dst->rttVariance);
+    }
+    if (!show_stats) {
         return;
     }
     int latencyUs = 0;
