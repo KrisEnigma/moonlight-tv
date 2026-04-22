@@ -35,7 +35,10 @@ typedef struct {
     lv_obj_t *active_dropdown;
 
     os_info_t os_info;
-    bool needs_restart;
+    /** Video/audio/streaming params: prompt reconnect if a session is active. */
+    bool needs_stream_reconnect;
+    /** Language changed: apply locale on close (no app quit). */
+    bool needs_locale_reapply;
 #if TARGET_WEBOS
     int panel_width;
     int panel_height;

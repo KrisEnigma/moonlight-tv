@@ -22,8 +22,8 @@ description: |
   ## Highlights
 
   * High bitrate option (up to 300 Mbps — use responsibly on Wi‑Fi).
-  * HDR10 (PQ) over HEVC Main10 when the host sends HDR.
-  * Optional **Tight display sync** (webOS Starfish) in Settings → Video.
+  * HDR10 (PQ) over HEVC Main10 or AV1 Main10 when the host sends HDR.
+  * Optional **Tight display sync** (webOS Starfish) and optional **AV1** in Settings → Video.
 
 funding:
   github: [GuiDev1994]

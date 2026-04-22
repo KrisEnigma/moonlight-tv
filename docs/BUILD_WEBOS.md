@@ -73,7 +73,7 @@ If you use [webosbrew](https://webosbrew.org/):
 
 3. **Install the .ipk**
    ```bash
-   ares-install dist/com.aurora.gamestream_1.0.1_arm.ipk -d <TV_NAME>
+   ares-install dist/com.aurora.gamestream_1.0.2_arm.ipk -d <TV_NAME>
    ```
    (Adjust the filename for your build version.)
 
@@ -155,7 +155,7 @@ CMAKE_BUILD_TYPE=Release ./scripts/webos/build_for_lg.sh
 
 The resulting package will be at:
 ```
-dist/com.aurora.gamestream_1.0.1_arm.ipk
+dist/com.aurora.gamestream_1.0.2_arm.ipk
 ```
 
 ### 3.4. Windows (Docker or WSL2)

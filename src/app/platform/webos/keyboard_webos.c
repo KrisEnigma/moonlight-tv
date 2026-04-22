@@ -20,7 +20,6 @@
 
 bool stream_input_webos_intercept_remote_keys(stream_input_t *input, const SDL_KeyboardEvent *event, short *keyCode) {
     session_t *session = input->session;
-    app_t *app = session->app;
     switch ((unsigned int) event->keysym.scancode) {
         case SDL_SCANCODE_WEBOS_EXIT: {
             if (event->state == SDL_PRESSED) {
@@ -29,6 +28,11 @@ bool stream_input_webos_intercept_remote_keys(stream_input_t *input, const SDL_K
             return true;
         }
         case SDL_SCANCODE_WEBOS_HOME: {
+            /* During streaming, forward Home to the host (e.g. Reshade); ribbon when idle/view-only. */
+            if (session != NULL && !input->view_only) {
+                *keyCode = VK_HOME;
+                return false;
+            }
             if (event->state == SDL_RELEASED) {
                 app_webos_open_ribbon();
             }

@@ -84,4 +84,5 @@ void session_input_screen_keyboard_closed(stream_input_t *input) {
         session_evmouse_enable(&input->evmouse);
     }
 #endif
+    stream_input_flush_pressed_keys(input);
 }

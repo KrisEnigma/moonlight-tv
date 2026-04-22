@@ -22,15 +22,16 @@
 #include <SDL.h>
 #include <assert.h>
 
-// 2MB decode size should be fairly enough for everything
+/* 2MB decode buffer. Very high-bitrate 4K120 HDR can push large frames; if drops or SMP stalls spike, profile before raising. */
 #define DECODER_BUFFER_SIZE (2048 * 1024)
 
 /** Slices hint for pipeline decode while later slices still arrive (high bitrate / 120 Hz). */
 #define VDEC_STREAM_SLICES_PER_FRAME 4
 
-/** Clamp presentation offset (ms) when tight sync is on. */
+/** Clamp presentation offset (ms) when tight sync is on (fixed; no longer user-configurable). */
 #define PRESENTATION_OFFSET_MS_MIN (-48)
 #define PRESENTATION_OFFSET_MS_MAX 0
+#define PRESENTATION_OFFSET_MS_DEFAULT (-12)
 
 static int vdec_stream_target_fps = 60;
 
@@ -63,17 +64,22 @@ DECODER_RENDERER_CALLBACKS ss4s_dec_callbacks = {
 
 void session_video_prepare_stream(void) {
     int caps = CAPABILITY_DIRECT_SUBMIT;
-    if (app_configuration != NULL && app_configuration->video_simple_sdp) {
-        ss4s_dec_callbacks.capabilities = caps;
-        commons_log_info("Session", "Video SDP caps: simple (direct submit only)");
-        return;
-    }
     const bool hevc = app_configuration != NULL && app_configuration->hevc;
+    const bool av1 = app_configuration != NULL && app_configuration->av1;
     if (hevc) {
         caps |= CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC;
+    }
+    if (av1) {
+        caps |= CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
+    }
+    if (hevc || av1) {
         caps |= CAPABILITY_SLICES_PER_FRAME(VDEC_STREAM_SLICES_PER_FRAME);
-        commons_log_info("Session", "Video SDP caps: HEVC RFI + %u slices/frame",
-                         (unsigned) VDEC_STREAM_SLICES_PER_FRAME);
+    }
+    if (hevc || av1) {
+        commons_log_info("Session", "Video SDP caps: RFI + %u slices/frame (HEVC=%d AV1=%d)",
+                         (unsigned) VDEC_STREAM_SLICES_PER_FRAME, hevc ? 1 : 0, av1 ? 1 : 0);
+    } else {
+        commons_log_info("Session", "Video SDP caps: direct submit only (H.264)");
     }
     ss4s_dec_callbacks.capabilities = caps;
 }
@@ -86,7 +92,14 @@ static const char *video_format_name(int videoFormat) {
             return "H265";
         case VIDEO_FORMAT_H265_MAIN10:
             return "H265 10bit";
+        case VIDEO_FORMAT_AV1_MAIN8:
+            return "AV1 8bit";
+        case VIDEO_FORMAT_AV1_MAIN10:
+            return "AV1 10bit";
         default:
+            if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+                return "AV1";
+            }
             return "Unknown";
     }
 }
@@ -104,6 +117,11 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
     vdec_stream_target_fps = redrawRate > 0 ? redrawRate : 60;
     vdec_warned_near_buffer_limit = false;
 
+    if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+        vdec_stream_info.width = width;
+        vdec_stream_info.height = height;
+    }
+
     SS4S_VideoInfo info;
     memset(&info, 0, sizeof(info));
     info.width = width;
@@ -113,7 +131,7 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
 #if TARGET_WEBOS
     if (session->app->settings.video_tight_sync) {
         info.tightFramePacing = true;
-        int off = session->app->settings.video_presentation_offset_ms;
+        int off = PRESENTATION_OFFSET_MS_DEFAULT;
         if (off > PRESENTATION_OFFSET_MS_MAX) {
             off = PRESENTATION_OFFSET_MS_MAX;
         } else if (off < PRESENTATION_OFFSET_MS_MIN) {
@@ -129,6 +147,10 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
         case VIDEO_FORMAT_H265:
         case VIDEO_FORMAT_H265_MAIN10:
             info.codec = SS4S_VIDEO_H265;
+            break;
+        case VIDEO_FORMAT_AV1_MAIN8:
+        case VIDEO_FORMAT_AV1_MAIN10:
+            info.codec = SS4S_VIDEO_AV1;
             break;
         default: {
             commons_log_error("Session", "Unsupported codec %s", vdec_stream_info.format);
@@ -254,6 +276,9 @@ void vdec_stat_submit(const struct VIDEO_STATS *src, unsigned long now) {
 
 void stream_info_parse_size(PDECODE_UNIT decodeUnit, struct VIDEO_INFO *info) {
     if (decodeUnit->frameType != FRAME_TYPE_IDR) { return; }
+    if (vdec_stream_format & VIDEO_FORMAT_MASK_AV1) {
+        return;
+    }
     for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
         if (entry->bufferType != BUFFER_TYPE_SPS) { continue; }
         sps_dimension_t dimension;

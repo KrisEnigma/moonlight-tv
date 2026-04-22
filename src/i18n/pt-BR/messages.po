@@ -548,9 +548,17 @@ msgstr "Sobre"
 msgid "Later"
 msgstr "Depois"
 
-#: src/app/ui/settings/settings.controller.c:425
-msgid "Some settings require a restart to take effect."
-msgstr "Algumas configurações requerem uma reinicialização para ter efeito."
+#: src/app/ui/settings/settings.controller.c
+msgid "Reconnect streaming"
+msgstr "Reconectar streaming"
+
+#: src/app/ui/settings/settings.controller.c
+msgid ""
+"Settings apply on the next streaming session. Reconnect now to use them "
+"right away?"
+msgstr ""
+"As definições aplicam-se na próxima sessão de streaming. Reconectar agora "
+"para usar já?"
 
 #: src/app/ui/streaming/hints.c:9
 msgid "Long press BACK (or press EXIT for traditional TV remote) while streaming, to open status overlay."
@@ -620,10 +628,55 @@ msgstr "Sincronização rígida com o display"
 #: src/app/ui/settings/panes/video.pane.c
 msgid ""
 "Starfish: PTS follows nominal frame rate and catches up to real time when late, "
-"plus a small earlier presentation hint — stronger vsync without extra decode work. "
-"Restart stream after changing."
+"with a fixed early presentation hint — stronger vsync without extra decode work. "
+"Reconnect stream after changing."
 msgstr ""
 "Starfish: PTS segue a cadência nominal e alinha ao tempo real quando atrasado, "
-"com um pequeno avanço na apresentação — vsync mais firme sem custo extra no decode. "
-"Reinicie o stream após alterar."
+"com um avanço fixo na apresentação — vsync mais firme sem custo extra no decode. "
+"Reconecte o stream após alterar."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Use AV1 when possible"
+msgstr "Usar AV1 quando possível"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "AV1 can improve efficiency; requires host and decoder support."
+msgstr "O AV1 pode melhorar a eficiência; requer suporte no host e no decoder."
+
+#: src/app/ui/settings/panes/video.pane.c
+#, c-format
+msgid "%s decoder doesn't support AV1 codec."
+msgstr "O decoder %s não suporta o codec AV1."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Enable H265 and/or AV1 (if supported) to stream HDR10 from the host."
+msgstr "Ative H265 e/ou AV1 (se suportados) para HDR10 a partir do host."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "HDR10 (PQ) when the host streams HDR (HEVC Main10 or AV1 Main10)."
+msgstr "HDR10 (PQ) quando o host envia HDR (HEVC Main10 ou AV1 Main10)."
+
+#: src/app/ui/settings/panes/basic.pane.c
+msgid "Client refresh rate (Hz)"
+msgstr "Taxa de atualização do cliente (Hz)"
+
+#: src/app/ui/settings/panes/basic.pane.c
+msgid "Auto"
+msgstr "Automático"
+
+#: src/app/ui/settings/panes/basic.pane.c
+msgid ""
+"Optional. Leave empty for default. Sent to the host as client refresh x100 for frame "
+"pacing (e.g. 119.94 for VRR game mode). Reconnect stream after changing."
+msgstr ""
+"Opcional. Deixe vazio para o padrão. Enviado ao host como taxa x100 para frame pacing "
+"(ex.: 119.94 no modo jogo com VRR). Reconecte o stream após alterar."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Full range YUV"
+msgstr "Faixa YUV completa"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Request full (0–255) video levels from the encoder when supported (Moonlight-style)."
+msgstr "Solicitar níveis de vídeo completos (0–255) ao encoder quando suportado (estilo Moonlight)."
 

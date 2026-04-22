@@ -470,3 +470,18 @@ void stream_input_send_key_event(stream_input_t *input, short keyCode, bool keyD
                        keyDown ? KEY_ACTION_DOWN : KEY_ACTION_UP,
                        modifiers);
 }
+
+void stream_input_flush_pressed_keys(stream_input_t *input) {
+    if (input->view_only) {
+        return;
+    }
+    while (_pressed_keys) {
+        struct KeysDown *n = _pressed_keys;
+        short kc = n->keyCode;
+        LiSendKeyboardEvent(0x8000 | kc, KEY_ACTION_UP, 0);
+        _pressed_keys = keys_remove(_pressed_keys, n);
+        free(n);
+    }
+    keydown_count = 0;
+    _pending_key_combo = KeyComboMax;
+}

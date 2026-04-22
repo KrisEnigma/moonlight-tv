@@ -47,20 +47,25 @@ typedef struct app_settings_t {
     bool virtual_mouse;
     bool swap_abxy;
     bool syskey_capture;
-    bool hdr;   /* HDR10 (PQ) over HEVC Main10 when host and decoder support it */
+    bool hdr;   /* HDR10 (PQ) over HEVC Main10 or AV1 Main10 when host and decoder support it */
     /**
-     * webOS Starfish: nominal-frame PTS pacing + small negative presentation offset
+     * webOS Starfish: nominal-frame PTS pacing + fixed small negative presentation offset
      * for tighter vsync without adding latency when the stream runs late.
      */
     bool video_tight_sync;
-    /** webOS: presentation offset (ms) when tight sync is on; typically -12, clamped -48..0 in decoder. */
-    int video_presentation_offset_ms;
     bool hevc;
-    /** If true, SDP omits HEVC RFI + slices (direct submit only); may help some TVs. */
-    bool video_simple_sdp;
+    /** Sunshine: negotiate AV1 Main8/Main10 when decoder exposes SS4S_VIDEO_AV1. */
+    bool av1;
     bool show_stats_on_start;
     bool show_stats_compact;
     int stick_deadzone;
+    /**
+     * Sent to host as STREAM_CONFIGURATION.clientRefreshRateX100 (Hz * 100, e.g. 11994 = 119.94 Hz).
+     * 0 = omit (host default frame pacing).
+     */
+    int client_refresh_rate_x100;
+    /** When true, negotiate COLOR_RANGE_FULL; when false, COLOR_RANGE_LIMITED (Moonlight Android-style toggle). */
+    bool force_full_color_range;
 
     char *conf_dir;
     char *ini_path;

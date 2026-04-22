@@ -55,6 +55,9 @@ void session_input_screen_keyboard_opened(stream_input_t *input);
 
 void session_input_screen_keyboard_closed(stream_input_t *input);
 
+/** Release any keys still marked down (host + local state). Call after soft keyboard closes to fix stuck input. */
+void stream_input_flush_pressed_keys(stream_input_t *input);
+
 void stream_input_send_gamepad_arrive(const stream_input_t *input, app_gamepad_state_t *gamepad);
 
 void stream_input_handle_key(stream_input_t *input, const SDL_KeyboardEvent *event);

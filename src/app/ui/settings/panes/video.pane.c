@@ -93,6 +93,13 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
 
     pref_header(view, locstr("Video Settings"));
 
+    lv_obj_t *full_range_cb =
+            pref_checkbox(view, locstr("Full range YUV"), &app_configuration->force_full_color_range, false);
+    pref_desc_label(view,
+                    locstr("Request full (0–255) video levels from the encoder when supported (Moonlight-style)."),
+                    false);
+    lv_obj_add_event_cb(full_range_cb, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
+
     lv_obj_t *hevc_checkbox = pref_checkbox(view, locstr("Use H265 when possible"), &app_configuration->hevc, false);
     lv_obj_t *hevc_hint = pref_desc_label(view, NULL, false);
     if (app->ss4s.video_cap.codecs & SS4S_VIDEO_H265) {
@@ -104,14 +111,16 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
                               SS4S_ModuleInfoGetName(app->ss4s.selection.video_module));
     }
 
-    pref_header(view, locstr("Advanced"));
-    lv_obj_t *simple_sdp_cb =
-            pref_checkbox(view, locstr("Compatible streaming (simple SDP)"), &app_configuration->video_simple_sdp, false);
-    pref_desc_label(view,
-                    locstr("Skips HEVC reference-frame invalidation and multi-slice hints. May help on some TVs "
-                           "when the host preset is aggressive. Reconnect stream after changing."),
-                    false);
-    lv_obj_add_event_cb(simple_sdp_cb, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
+    lv_obj_t *av1_checkbox = pref_checkbox(view, locstr("Use AV1 when possible"), &app_configuration->av1, false);
+    lv_obj_t *av1_hint = pref_desc_label(view, NULL, false);
+    if (app->ss4s.video_cap.codecs & SS4S_VIDEO_AV1) {
+        lv_obj_clear_state(av1_checkbox, LV_STATE_DISABLED);
+        lv_label_set_text(av1_hint, locstr("AV1 can improve efficiency; requires host and decoder support."));
+    } else {
+        lv_obj_add_state(av1_checkbox, LV_STATE_DISABLED);
+        lv_label_set_text_fmt(av1_hint, locstr("%s decoder doesn't support AV1 codec."),
+                              SS4S_ModuleInfoGetName(app->ss4s.selection.video_module));
+    }
 
     lv_obj_t *hdr_checkbox = pref_checkbox(view, locstr("HDR"), &app_configuration->hdr, false);
     lv_obj_t *hdr_hint = pref_desc_label(view, NULL, false);
@@ -126,6 +135,7 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
 
     lv_obj_add_event_cb(vdec_dropdown, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
     lv_obj_add_event_cb(hevc_checkbox, hdr_state_update_cb, LV_EVENT_VALUE_CHANGED, controller);
+    lv_obj_add_event_cb(av1_checkbox, hdr_state_update_cb, LV_EVENT_VALUE_CHANGED, controller);
     lv_obj_add_event_cb(hdr_checkbox, hdr_state_update_cb, LV_EVENT_VALUE_CHANGED, controller);
     lv_obj_add_event_cb(hdr_more, hdr_more_click_cb, LV_EVENT_CLICKED, NULL);
 
@@ -134,19 +144,11 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
     lv_obj_t *tight_cb =
             pref_checkbox(view, locstr("Tight display sync"), &app_configuration->video_tight_sync, false);
     pref_desc_label(view,
-                     locstr("Starfish: PTS follows nominal frame rate and catches up to real time when late, "
-                            "plus a small earlier presentation hint — stronger vsync without extra decode work. "
-                            "Restart stream after changing."),
-                     false);
-    lv_obj_add_event_cb(tight_cb, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
-    pref_title_label(view, locstr("Presentation offset (ms)"));
-    lv_obj_t *offset_slider =
-            pref_slider(view, &app_configuration->video_presentation_offset_ms, -48, 0, 3);
-    pref_desc_label(view,
-                    locstr("Negative ms nudges video slightly earlier toward panel vsync when tight sync is on. "
-                           "Default -12. Reconnect stream after changing."),
+                    locstr("Starfish: PTS follows nominal frame rate and catches up to real time when late, "
+                           "with a fixed early presentation hint — stronger vsync without extra decode work. "
+                           "Reconnect stream after changing."),
                     false);
-    lv_obj_add_event_cb(offset_slider, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
+    lv_obj_add_event_cb(tight_cb, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
 #endif
 
     return view;
@@ -160,7 +162,7 @@ static void obj_created(lv_fragment_t *self, lv_obj_t *obj) {
 static void module_changed_cb(lv_event_t *e) {
     video_pane_t *fragment = (video_pane_t *) lv_event_get_user_data(e);
     settings_controller_t *parent = fragment->parent;
-    parent->needs_restart = true;
+    parent->needs_stream_reconnect = true;
     update_conflict_hint(parent->app, fragment->conflict_hint);
 }
 
@@ -171,16 +173,20 @@ static void hdr_state_update_cb(lv_event_t *e) {
 
 static void hdr_state_update(video_pane_t *controller) {
     app_t *app = controller->parent->app;
+    const bool want_hevc_hdr = app_configuration->hevc && (app->ss4s.video_cap.codecs & SS4S_VIDEO_H265);
+    const bool want_av1_hdr = app_configuration->av1 && (app->ss4s.video_cap.codecs & SS4S_VIDEO_AV1);
     if (app->ss4s.video_cap.hdr == 0) {
         lv_obj_add_state(controller->hdr_checkbox, LV_STATE_DISABLED);
         lv_label_set_text_fmt(controller->hdr_hint, locstr("%s decoder doesn't support HDR."),
                               SS4S_ModuleInfoGetName(app->ss4s.selection.video_module));
-    } else if (!app_configuration->hevc) {
+    } else if (!want_hevc_hdr && !want_av1_hdr) {
         lv_obj_add_state(controller->hdr_checkbox, LV_STATE_DISABLED);
-        lv_label_set_text(controller->hdr_hint, locstr("H265 is required to use HDR."));
+        lv_label_set_text(controller->hdr_hint,
+                          locstr("Enable H265 and/or AV1 (if supported) to stream HDR10 from the host."));
     } else {
         lv_obj_clear_state(controller->hdr_checkbox, LV_STATE_DISABLED);
-        lv_label_set_text(controller->hdr_hint, locstr("HDR10 (PQ) when the host streams HDR over HEVC Main10."));
+        lv_label_set_text(controller->hdr_hint,
+                          locstr("HDR10 (PQ) when the host streams HDR (HEVC Main10 or AV1 Main10)."));
     }
 }
 

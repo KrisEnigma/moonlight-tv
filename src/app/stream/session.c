@@ -52,6 +52,12 @@ session_t *session_create(app_t *app, const CONFIGURATION *config, const SERVER_
             session->server->serverInfo.serverCodecModeSupport |= SCM_HEVC_MAIN10;
         }
     }
+    if (session->config.stream.supportedVideoFormats & VIDEO_FORMAT_AV1_MAIN8) {
+        session->server->serverInfo.serverCodecModeSupport |= SCM_AV1_MAIN8;
+    }
+    if (session->config.stream.supportedVideoFormats & VIDEO_FORMAT_AV1_MAIN10) {
+        session->server->serverInfo.serverCodecModeSupport |= SCM_AV1_MAIN10;
+    }
     session->app_id = gs_app->id;
     session->app_name = strdup(gs_app->name);
     session->mutex = SDL_CreateMutex();
@@ -90,6 +96,16 @@ void session_destroy(session_t *session) {
     SDL_DestroyMutex(session->state_lock);
     free(session->app_name);
     free(session);
+}
+
+bool session_is_streaming(const session_t *session) {
+    if (!session) {
+        return false;
+    }
+    SDL_LockMutex(session->state_lock);
+    bool streaming = (session->state == STREAMING_STREAMING);
+    SDL_UnlockMutex(session->state_lock);
+    return streaming;
 }
 
 void session_interrupt(session_t *session, bool quitapp, streaming_interrupt_reason_t reason) {
@@ -286,6 +302,12 @@ void session_config_init(app_t *app, session_config_t *config, const SERVER_DATA
             config->stream.supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
         }
     }
+    if (app_config->av1 && video_cap.codecs & SS4S_VIDEO_AV1) {
+        config->stream.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN8;
+        if (app_config->hdr && video_cap.hdr) {
+            config->stream.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN10;
+        }
+    }
     // If no video format is supported, default to H.264
     if (config->stream.supportedVideoFormats == 0) {
         config->stream.supportedVideoFormats = VIDEO_FORMAT_H264;
@@ -298,7 +320,10 @@ void session_config_init(app_t *app, session_config_t *config, const SERVER_DATA
     } else {
         config->stream.colorSpace = COLORSPACE_REC_601;
     }
-    config->stream.colorRange = video_cap.fullColorRange ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
+    config->stream.colorRange = app_config->force_full_color_range ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
+    if (app_config->client_refresh_rate_x100 > 0) {
+        config->stream.clientRefreshRateX100 = app_config->client_refresh_rate_x100;
+    }
 #if FEATURE_SURROUND_SOUND
     if (audio_cap.maxChannels < CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION(config->stream.audioConfiguration)) {
         switch (audio_cap.maxChannels) {

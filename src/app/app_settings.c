@@ -69,12 +69,13 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     config->virtual_mouse = false;
     config->hdr = false;
     config->video_tight_sync = false;
-    config->video_presentation_offset_ms = -12;
     config->hevc = true;
-    config->video_simple_sdp = false;
+    config->av1 = false;
     config->show_stats_on_start = false;
     config->show_stats_compact = false;
     config->stick_deadzone = 7;
+    config->client_refresh_rate_x100 = 0;
+    config->force_full_color_range = true;
 
     config->conf_dir = conf_dir;
     config->ini_path = path_join(conf_dir, CONF_NAME_MOONLIGHT);
@@ -126,11 +127,12 @@ bool settings_save(app_settings_t *config) {
     ini_write_string(fp, "decoder", config->decoder);
     ini_write_bool(fp, "hdr", config->hdr);
     ini_write_bool(fp, "tight_display_sync", config->video_tight_sync);
-    ini_write_int(fp, "presentation_offset_ms", config->video_presentation_offset_ms);
     ini_write_bool(fp, "hevc", config->hevc);
-    ini_write_bool(fp, "video_simple_sdp", config->video_simple_sdp);
+    ini_write_bool(fp, "av1", config->av1);
     ini_write_bool(fp, "show_stats_on_start", config->show_stats_on_start);
     ini_write_bool(fp, "show_stats_compact", config->show_stats_compact);
+    ini_write_int(fp, "client_refresh_rate_x100", config->client_refresh_rate_x100);
+    ini_write_bool(fp, "force_full_color_range", config->force_full_color_range);
 
     ini_write_section(fp, "audio");
     ini_write_string(fp, "backend", config->audio_backend);
@@ -220,15 +222,12 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         set_int(&config->rotate, value);
     } else if (INI_NAME_MATCH("hevc")) {
         config->hevc = INI_IS_TRUE(value);
+    } else if (INI_FULL_MATCH("video", "av1")) {
+        config->av1 = INI_IS_TRUE(value);
     } else if (INI_FULL_MATCH("video", "video_simple_sdp")) {
-        config->video_simple_sdp = INI_IS_TRUE(value);
+        /* Legacy: ignored; client always negotiates RFI + slices when applicable. */
     } else if (INI_FULL_MATCH("video", "presentation_offset_ms")) {
-        set_int(&config->video_presentation_offset_ms, value);
-        if (config->video_presentation_offset_ms > 0) {
-            config->video_presentation_offset_ms = 0;
-        } else if (config->video_presentation_offset_ms < -48) {
-            config->video_presentation_offset_ms = -48;
-        }
+        /* Legacy: ignored; tight sync uses a fixed presentation offset in the decoder. */
     } else if (INI_NAME_MATCH("show_stats_on_start")) {
         config->show_stats_on_start = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("show_stats_compact")) {
@@ -237,6 +236,15 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         config->hdr = INI_IS_TRUE(value);
     } else if (INI_FULL_MATCH("video", "tight_display_sync")) {
         config->video_tight_sync = INI_IS_TRUE(value);
+    } else if (INI_FULL_MATCH("video", "client_refresh_rate_x100")) {
+        set_int(&config->client_refresh_rate_x100, value);
+        if (config->client_refresh_rate_x100 < 0) {
+            config->client_refresh_rate_x100 = 0;
+        } else if (config->client_refresh_rate_x100 > 24000) {
+            config->client_refresh_rate_x100 = 24000;
+        }
+    } else if (INI_FULL_MATCH("video", "force_full_color_range")) {
+        config->force_full_color_range = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("surround")) {
         config->stream.audioConfiguration = parse_audio_config(value);
     } else if (INI_NAME_MATCH("sops")) {

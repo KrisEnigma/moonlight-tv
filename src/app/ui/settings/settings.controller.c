@@ -1,5 +1,7 @@
 #include "settings.controller.h"
 
+#include <string.h>
+
 #include "ui/root.h"
 
 #include "lvgl/font/material_icons_regular_symbols.h"
@@ -9,6 +11,7 @@
 #include "util/user_event.h"
 #include "util/font.h"
 #include "util/i18n.h"
+#include "stream/session.h"
 #include "lvgl/theme/lv_theme_moonlight.h"
 
 typedef struct {
@@ -59,7 +62,9 @@ static void show_pane(settings_controller_t *controller, const lv_fragment_class
 
 static void settings_close(lv_event_t *e);
 
-static void restart_confirm_cb(lv_event_t *e);
+static void stream_reconnect_confirm_cb(lv_event_t *e);
+
+static void settings_apply_locale_if_needed(settings_controller_t *controller);
 
 static void pane_child_added(lv_event_t *e);
 
@@ -77,6 +82,8 @@ const lv_fragment_class_t settings_controller_cls = {
 static void settings_controller_ctor(lv_fragment_t *self, void *args) {
     settings_controller_t *fragment = (settings_controller_t *) self;
     fragment->app = args;
+    fragment->needs_stream_reconnect = false;
+    fragment->needs_locale_reapply = false;
     fragment->mini = fragment->pending_mini = UI_IS_MINI(fragment->app->ui.width);
     os_info_get(&fragment->os_info);
 #if TARGET_WEBOS
@@ -154,6 +161,7 @@ static void on_view_created(lv_fragment_t *self, lv_obj_t *view) {
 static void on_destroy_view(lv_fragment_t *self, lv_obj_t *view) {
     settings_controller_t *controller = (settings_controller_t *) self;
     settings_save(app_configuration);
+    settings_apply_locale_if_needed(controller);
 
     app_input_set_group(&controller->app->ui.input, NULL);
     if (controller->mini) {
@@ -418,29 +426,41 @@ static void on_dropdown_clicked(lv_event_t *event) {
     }
 }
 
+static void settings_apply_locale_if_needed(settings_controller_t *controller) {
+#ifdef FEATURE_I18N_LANGUAGE_SETTINGS
+    if (!controller->needs_locale_reapply || app_configuration->language == NULL || app_configuration->language[0] == '\0' ||
+        strcmp(app_configuration->language, "auto") == 0) {
+        return;
+    }
+    i18n_setlocale(app_configuration->language);
+#endif
+}
+
 static void settings_close(lv_event_t *e) {
     settings_controller_t *fragment = lv_event_get_user_data(e);
-    if (fragment->needs_restart) {
-        static const char *btn_txts[] = {translatable("Later"), translatable("Quit"), ""};
-        lv_obj_t *msgbox = lv_msgbox_create_i18n(NULL, NULL, locstr("Some settings require a restart to take effect."),
-                                                 btn_txts, false);
+    if (fragment->needs_stream_reconnect && fragment->app->session != NULL && session_is_streaming(fragment->app->session)) {
+        static const char *btn_txts[] = {translatable("Later"), translatable("Reconnect streaming"), ""};
+        lv_obj_t *msgbox =
+                lv_msgbox_create_i18n(NULL, NULL,
+                                      locstr("Settings apply on the next streaming session. Reconnect now to use them "
+                                             "right away?"),
+                                      btn_txts, false);
         lv_obj_center(msgbox);
-        lv_obj_add_event_cb(msgbox, restart_confirm_cb, LV_EVENT_VALUE_CHANGED, fragment);
+        lv_obj_add_event_cb(msgbox, stream_reconnect_confirm_cb, LV_EVENT_VALUE_CHANGED, fragment);
         return;
     }
     lv_fragment_del((lv_fragment_t *) fragment);
 }
 
-static void restart_confirm_cb(lv_event_t *e) {
+static void stream_reconnect_confirm_cb(lv_event_t *e) {
     settings_controller_t *fragment = lv_event_get_user_data(e);
     lv_obj_t *msgbox = lv_event_get_current_target(e);
     uint16_t selected = lv_msgbox_get_active_btn(msgbox);
-    if (selected == 1) {
-        app_request_exit();
-    } else {
-        lv_msgbox_close_async(msgbox);
-        lv_fragment_del((lv_fragment_t *) fragment);
+    if (selected == 1 && fragment->app->session != NULL) {
+        session_interrupt(fragment->app->session, false, STREAMING_INTERRUPT_USER);
     }
+    lv_msgbox_close_async(msgbox);
+    lv_fragment_del((lv_fragment_t *) fragment);
 }
 
 static void pane_child_added(lv_event_t *e) {

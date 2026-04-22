@@ -546,8 +546,14 @@ msgstr ""
 msgid "Later"
 msgstr ""
 
-#: src/app/ui/settings/settings.controller.c:425
-msgid "Some settings require a restart to take effect."
+#: src/app/ui/settings/settings.controller.c
+msgid "Reconnect streaming"
+msgstr ""
+
+#: src/app/ui/settings/settings.controller.c
+msgid ""
+"Settings apply on the next streaming session. Reconnect now to use them "
+"right away?"
 msgstr ""
 
 #: src/app/ui/streaming/hints.c:9
@@ -626,6 +632,27 @@ msgstr ""
 #: src/app/ui/settings/panes/video.pane.c
 msgid ""
 "Starfish: PTS follows nominal frame rate and catches up to real time when late, "
-"plus a small earlier presentation hint — stronger vsync without extra decode work. "
-"Restart stream after changing."
+"with a fixed early presentation hint — stronger vsync without extra decode work. "
+"Reconnect stream after changing."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Use AV1 when possible"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "AV1 can improve efficiency; requires host and decoder support."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+#, c-format
+msgid "%s decoder doesn't support AV1 codec."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Enable H265 and/or AV1 (if supported) to stream HDR10 from the host."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "HDR10 (PQ) when the host streams HDR (HEVC Main10 or AV1 Main10)."
 msgstr ""

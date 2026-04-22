@@ -128,6 +128,6 @@ static void obj_created(lv_fragment_t *self, lv_obj_t *obj) {
 static void module_changed_cb(lv_event_t *e) {
     audio_pane_t *fragment = (audio_pane_t *) lv_event_get_user_data(e);
     settings_controller_t *parent = fragment->parent;
-    parent->needs_restart = true;
+    parent->needs_stream_reconnect = true;
     update_conflict_hint(parent->app, fragment->conflict_hint);
 }

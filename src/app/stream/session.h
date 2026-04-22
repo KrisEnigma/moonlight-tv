@@ -82,6 +82,9 @@ void session_destroy(session_t *session);
 
 void session_interrupt(session_t *session, bool quitapp, streaming_interrupt_reason_t reason);
 
+/** True while the streaming worker reports STREAMING_STREAMING (active decode path). */
+bool session_is_streaming(const session_t *session);
+
 bool session_start_input(session_t *session);
 
 void session_stop_input(session_t *session);

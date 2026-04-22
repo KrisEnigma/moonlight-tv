@@ -9,6 +9,9 @@
 #include "util/i18n.h"
 #include "logging.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+
 typedef struct {
     lv_fragment_t base;
     settings_controller_t *parent;
@@ -17,6 +20,7 @@ typedef struct {
     lv_obj_t *bitrate_label;
     lv_obj_t *bitrate_slider;
     lv_obj_t *bitrate_warning;
+    lv_obj_t *refresh_rate_ta;
 
     pref_dropdown_string_entry_t *lang_entries;
     int lang_entries_len;
@@ -41,6 +45,14 @@ static void init_locale_entries(basic_pane_t *pane);
 static void pref_mark_restart_cb(lv_event_t *e);
 
 static void update_bitrate_hint(basic_pane_t *pane);
+
+static void on_refresh_rate_committed(lv_event_t *e);
+
+static void on_refresh_rate_minus(lv_event_t *e);
+
+static void on_refresh_rate_plus(lv_event_t *e);
+
+static void refresh_rate_sync_ta(lv_obj_t *ta);
 
 const lv_fragment_class_t settings_pane_basic_cls = {
     .constructor_cb = pane_ctor,
@@ -108,6 +120,43 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
     lv_obj_set_flex_grow(fps_dropdown, 1);
     lv_obj_add_event_cb(fps_dropdown, on_res_fps_updated, LV_EVENT_VALUE_CHANGED, self);
 
+    pref_title_label(view, locstr("Client refresh rate (Hz)"));
+    lv_obj_t *rr_row = lv_obj_create(view);
+    lv_obj_remove_style_all(rr_row);
+    lv_obj_set_width(rr_row, LV_PCT(100));
+    lv_obj_set_style_pad_column(rr_row, lv_disp_dpx(lv_obj_get_disp(rr_row), 8), 0);
+    lv_obj_set_flex_flow(rr_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(rr_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *rr_ta = lv_textarea_create(rr_row);
+    pane->refresh_rate_ta = rr_ta;
+    lv_textarea_set_one_line(rr_ta, true);
+    lv_textarea_set_accepted_chars(rr_ta, "0123456789.");
+    lv_textarea_set_max_length(rr_ta, 10);
+    lv_textarea_set_placeholder_text(rr_ta, locstr("Auto"));
+    lv_obj_set_flex_grow(rr_ta, 1);
+    refresh_rate_sync_ta(rr_ta);
+    lv_obj_add_event_cb(rr_ta, on_refresh_rate_committed, LV_EVENT_DEFOCUSED, pane);
+
+    lv_obj_t *btn_m = lv_btn_create(rr_row);
+    lv_obj_set_height(btn_m, LV_SIZE_CONTENT);
+    lv_obj_t *lbl_m = lv_label_create(btn_m);
+    lv_label_set_text(lbl_m, "-");
+    lv_obj_center(lbl_m);
+    lv_obj_add_event_cb(btn_m, on_refresh_rate_minus, LV_EVENT_CLICKED, pane);
+
+    lv_obj_t *btn_p = lv_btn_create(rr_row);
+    lv_obj_set_height(btn_p, LV_SIZE_CONTENT);
+    lv_obj_t *lbl_p = lv_label_create(btn_p);
+    lv_label_set_text(lbl_p, "+");
+    lv_obj_center(lbl_p);
+    lv_obj_add_event_cb(btn_p, on_refresh_rate_plus, LV_EVENT_CLICKED, pane);
+
+    pref_desc_label(view,
+                    locstr("Optional. Leave empty for default. Sent to the host as client refresh x100 for frame "
+                           "pacing (e.g. 119.94 for VRR game mode). Reconnect stream after changing."),
+                    false);
+
     pane->res_warning = lv_label_create(view);
     lv_obj_add_flag(pane->res_warning, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_width(pane->res_warning, LV_PCT(100));
@@ -168,12 +217,14 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
 
 static void on_bitrate_changed(lv_event_t *e) {
     basic_pane_t *pane = lv_event_get_user_data(e);
+    pane->parent->needs_stream_reconnect = true;
     update_bitrate_label(pane);
     update_bitrate_hint(pane);
 }
 
 static void on_res_fps_updated(lv_event_t *e) {
     basic_pane_t *pane = lv_event_get_user_data(e);
+    pane->parent->needs_stream_reconnect = true;
     int bitrate = settings_optimal_bitrate(&pane->parent->app->ss4s.video_cap, app_configuration->stream.width,
                                            app_configuration->stream.height, app_configuration->stream.fps);
     if (bitrate > app_configuration->stream.bitrate) {
@@ -213,6 +264,85 @@ static void update_bitrate_hint(basic_pane_t *pane) {
     }
 }
 
+static void refresh_rate_sync_ta(lv_obj_t *ta) {
+    if (app_configuration->client_refresh_rate_x100 > 0) {
+        char b[24];
+        snprintf(b, sizeof b, "%.2f", app_configuration->client_refresh_rate_x100 / 100.0);
+        lv_textarea_set_text(ta, b);
+    } else {
+        lv_textarea_set_text(ta, "");
+    }
+}
+
+static void refresh_rate_parse_and_store(lv_obj_t *ta, basic_pane_t *pane) {
+    const char *s = lv_textarea_get_text(ta);
+    while (*s == ' ' || *s == '\t') {
+        s++;
+    }
+    if (*s == '\0') {
+        app_configuration->client_refresh_rate_x100 = 0;
+        pane->parent->needs_stream_reconnect = true;
+        return;
+    }
+    char *end = NULL;
+    double hz = strtod(s, &end);
+    (void) end;
+    if (hz < 23.0) {
+        hz = 23.0;
+    }
+    if (hz > 240.0) {
+        hz = 240.0;
+    }
+    int x100 = (int) (hz * 100.0 + 0.5);
+    if (x100 < 2300) {
+        x100 = 2300;
+    }
+    if (x100 > 24000) {
+        x100 = 24000;
+    }
+    app_configuration->client_refresh_rate_x100 = x100;
+    refresh_rate_sync_ta(ta);
+    pane->parent->needs_stream_reconnect = true;
+}
+
+static void on_refresh_rate_committed(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_DEFOCUSED) {
+        return;
+    }
+    basic_pane_t *pane = lv_event_get_user_data(e);
+    refresh_rate_parse_and_store(lv_event_get_target(e), pane);
+}
+
+static void on_refresh_rate_minus(lv_event_t *e) {
+    basic_pane_t *pane = lv_event_get_user_data(e);
+    int v = app_configuration->client_refresh_rate_x100;
+    if (v <= 0) {
+        v = 6000;
+    }
+    v -= 1;
+    if (v < 2300) {
+        v = 2300;
+    }
+    app_configuration->client_refresh_rate_x100 = v;
+    refresh_rate_sync_ta(pane->refresh_rate_ta);
+    pane->parent->needs_stream_reconnect = true;
+}
+
+static void on_refresh_rate_plus(lv_event_t *e) {
+    basic_pane_t *pane = lv_event_get_user_data(e);
+    int v = app_configuration->client_refresh_rate_x100;
+    if (v <= 0) {
+        v = 6000;
+    }
+    v += 1;
+    if (v > 24000) {
+        v = 24000;
+    }
+    app_configuration->client_refresh_rate_x100 = v;
+    refresh_rate_sync_ta(pane->refresh_rate_ta);
+    pane->parent->needs_stream_reconnect = true;
+}
+
 static void init_locale_entries(basic_pane_t *pane) {
     pane->lang_entries = lv_mem_alloc(sizeof(pref_dropdown_string_entry_t) * (I18N_LOCALES_LEN + 2));
     lv_memset_00(pane->lang_entries, sizeof(pref_dropdown_string_entry_t) * (I18N_LOCALES_LEN + 2));
@@ -240,5 +370,5 @@ static void init_locale_entries(basic_pane_t *pane) {
 static void pref_mark_restart_cb(lv_event_t *e) {
     basic_pane_t *pane = (basic_pane_t *) lv_event_get_user_data(e);
     settings_controller_t *parent = pane->parent;
-    parent->needs_restart |= strcasecmp(i18n_locale(), app_configuration->language) != 0;
+    parent->needs_locale_reapply |= strcasecmp(i18n_locale(), app_configuration->language) != 0;
 }

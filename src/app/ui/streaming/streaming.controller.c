@@ -188,17 +188,18 @@ bool streaming_refresh_stats() {
 #endif
         float netMs = (float) dst->rtt;
         float hostMs = 0.0f;
-        float decMs = 0.0f;
+        float submitMs = 0.0f;
+        float decOnlyMs = 0.0f;
         if (dst->submittedFrames) {
             if (vdec_stream_info.has_host_latency) {
                 hostMs = (float) dst->totalCaptureLatency / (float) dst->submittedFrames / 10.0f;
             }
             if (vdec_stream_info.has_decoder_latency) {
-                float avgSubmitTime = (float) dst->totalSubmitTime / (float) dst->submittedFrames;
-                decMs = avgSubmitTime + dst->avgDecoderLatency;
+                submitMs = (float) dst->totalSubmitTime / (float) dst->submittedFrames;
+                decOnlyMs = dst->avgDecoderLatency;
             }
         }
-        float totalMs = netMs + hostMs + decMs;
+        float totalMs = netMs + hostMs + submitMs + decOnlyMs;
         float fdPct = (dst->totalFrames > 0)
             ? (float) dst->networkDroppedFrames / (float) dst->totalFrames * 100.0f
             : 0.0f;
@@ -208,10 +209,10 @@ bool streaming_refresh_stats() {
         const char *hdr_str = app_configuration->hdr ? "HDR" : "SDR";
         float bitrateMbps = (float) dst->currentBitrateKbps / 1000000.0f;
         lv_label_set_text_fmt(controller->stats_compact_label,
-                              "%d\u00d7%d %s %s FPS %.0f N %u/%ums H %.0fms D %.0fms TL %.0fms FD %.2f%% %.1f Mbps",
+                              "%d\u00d7%d %s %s FPS %.0f N %u/%ums H %.0fms S %.0fms D %.0fms TL %.0fms FD %.2f%% %.1f Mbps",
                               w, h, hdr_str, codec, renderFps,
                               (unsigned) dst->rtt, (unsigned) dst->rttVariance,
-                              hostMs, decMs, totalMs, fdPct, bitrateMbps);
+                              hostMs, submitMs, decOnlyMs, totalMs, fdPct, bitrateMbps);
         /* Quality dot: green ≤25ms, yellow ≤30ms, red >30ms */
         if (controller->stats_quality_indicator) {
             lv_color_t qc = totalMs <= 25.0f ? lv_palette_main(LV_PALETTE_GREEN)
@@ -251,22 +252,22 @@ bool streaming_refresh_stats() {
     lv_label_set_text_fmt(controller->stats_items.render_fps, "%.2f FPS", renderFps);
     lv_label_set_text_fmt(controller->stats_items.bitrate, "%u Mbps", dst->currentBitrateKbps / 1000000);
 
-    if (dst->submittedFrames) {
-        lv_label_set_text_fmt(controller->stats_items.drop_rate, "%.2f%%",
-                              (float) dst->networkDroppedFrames / (float) dst->totalFrames * 100);
-        if (vdec_stream_info.has_host_latency) {
-            float avgCapLatency = (float) dst->totalCaptureLatency / (float) dst->submittedFrames / 10.0f;
-            lv_label_set_text_fmt(controller->stats_items.host_latency, "avg %.2f ms", avgCapLatency);
-        } else {
-            lv_label_set_text_fmt(controller->stats_items.host_latency, "not available");
-        }
-        if (vdec_stream_info.has_decoder_latency) {
-            float avgSubmitTime = (float) dst->totalSubmitTime / (float) dst->submittedFrames;
-            lv_label_set_text_fmt(controller->stats_items.vdec_latency, "avg %.2f ms",
-                                  avgSubmitTime + dst->avgDecoderLatency);
-        } else {
-            lv_label_set_text_fmt(controller->stats_items.vdec_latency, "not available");
-        }
+        if (dst->submittedFrames) {
+            lv_label_set_text_fmt(controller->stats_items.drop_rate, "%.2f%%",
+                                  (float) dst->networkDroppedFrames / (float) dst->totalFrames * 100);
+            if (vdec_stream_info.has_host_latency) {
+                float avgCapLatency = (float) dst->totalCaptureLatency / (float) dst->submittedFrames / 10.0f;
+                lv_label_set_text_fmt(controller->stats_items.host_latency, "avg %.2f ms", avgCapLatency);
+            } else {
+                lv_label_set_text_fmt(controller->stats_items.host_latency, "not available");
+            }
+            if (vdec_stream_info.has_decoder_latency) {
+                float avgSubmitTime = (float) dst->totalSubmitTime / (float) dst->submittedFrames;
+                lv_label_set_text_fmt(controller->stats_items.vdec_latency, "submit %.2f ms + decode %.2f ms",
+                                      avgSubmitTime, dst->avgDecoderLatency);
+            } else {
+                lv_label_set_text_fmt(controller->stats_items.vdec_latency, "not available");
+            }
     } else {
         lv_label_set_text(controller->stats_items.drop_rate, "-");
         lv_label_set_text_fmt(controller->stats_items.host_latency, "-");
