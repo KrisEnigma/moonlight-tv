@@ -160,10 +160,7 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
     pref_desc_label(view, locstr("Show minimalist one-line stats like Moonlight Android (FPS, RTT, bitrate)."), false);
 
 #ifdef FEATURE_I18N_LANGUAGE_SETTINGS
-    lv_obj_t *lang_label = pref_title_label(view, "Language");
-    if (strcmp(locstr("Language"), "Language") != 0) {
-        lv_label_set_text_fmt(lang_label, "%s (Language)", locstr("Language"));
-    }
+    lv_obj_t *lang_label = pref_title_label(view, locstr("Language"));
 
     lv_obj_t *language_dropdown = pref_dropdown_string(view, pane->lang_entries, pane->lang_entries_len,
                                                        &app_configuration->language);

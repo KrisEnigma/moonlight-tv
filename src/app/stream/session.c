@@ -100,9 +100,9 @@ bool session_is_streaming(const session_t *session) {
     if (!session) {
         return false;
     }
-    SDL_LockMutex(session->state_lock);
+    SDL_LockMutex(session->mutex);
     bool streaming = (session->state == STREAMING_STREAMING);
-    SDL_UnlockMutex(session->state_lock);
+    SDL_UnlockMutex(session->mutex);
     return streaming;
 }
 
@@ -325,7 +325,8 @@ void session_config_init(app_t *app, session_config_t *config, const SERVER_DATA
     } else {
         config->stream.colorSpace = COLORSPACE_REC_601;
     }
-    config->stream.colorRange = app_config->force_full_color_range ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
+    /* Full range (0–255) when HDR is on, like Moonlight Android; SDR uses limited range. */
+    config->stream.colorRange = app_config->hdr ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
     if (app_config->client_refresh_rate_x100 > 0) {
         config->stream.clientRefreshRateX100 = app_config->client_refresh_rate_x100;
     }

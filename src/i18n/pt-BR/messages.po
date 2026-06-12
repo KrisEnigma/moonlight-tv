@@ -610,8 +610,20 @@ msgid "Performance"
 msgstr "Desempenho"
 
 #: src/app/ui/launcher/launcher.view.c
+msgid "Select server"
+msgstr "Selecionar servidor"
+
+#: src/app/ui/launcher/launcher.view.c
 msgid "Game streaming"
 msgstr "Streaming de jogos"
+
+#: src/app/ui/settings/settings.controller.c
+msgid "Language changes take effect after restarting the app. Restart now?"
+msgstr "As alterações de idioma só passam a valer após reiniciar o app. Reiniciar agora?"
+
+#: src/app/ui/settings/settings.controller.c
+msgid "Restart app"
+msgstr "Reiniciar app"
 
 #: src/app/ui/launcher/apps.controller.c
 msgid "Games on this PC"
@@ -653,8 +665,12 @@ msgid "Enable H265 and/or AV1 (if supported) to stream HDR10 from the host."
 msgstr "Ative H265 e/ou AV1 (se suportados) para HDR10 a partir do host."
 
 #: src/app/ui/settings/panes/video.pane.c
-msgid "HDR10 (PQ) when the host streams HDR (HEVC Main10 or AV1 Main10)."
-msgstr "HDR10 (PQ) quando o host envia HDR (HEVC Main10 ou AV1 Main10)."
+msgid ""
+"HDR10 (PQ) when the host streams HDR (HEVC Main10 or AV1 Main10). Enabling HDR "
+"also uses the full video color range (Android-style)."
+msgstr ""
+"HDR10 (PQ) quando o host envia HDR (HEVC Main10 ou AV1 Main10). Ao ativar o HDR, "
+"também se utiliza toda a gama de cores de vídeo (como no Android)."
 
 #: src/app/ui/settings/panes/basic.pane.c
 msgid "Client refresh rate (Hz)"
@@ -671,12 +687,4 @@ msgid ""
 msgstr ""
 "Opcional. Deixe vazio para o padrão. Enviado ao host como taxa x100 para frame pacing "
 "(ex.: 119.94 no modo jogo com VRR). Reconecte o stream após alterar."
-
-#: src/app/ui/settings/panes/video.pane.c
-msgid "Full range YUV"
-msgstr "Faixa YUV completa"
-
-#: src/app/ui/settings/panes/video.pane.c
-msgid "Request full (0–255) video levels from the encoder when supported (Moonlight-style)."
-msgstr "Solicitar níveis de vídeo completos (0–255) ao encoder quando suportado (estilo Moonlight)."
 

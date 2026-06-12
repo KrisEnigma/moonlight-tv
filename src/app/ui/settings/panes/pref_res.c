@@ -8,6 +8,7 @@ typedef struct resolution_pair {
     int w;
     int h;
     bool fallback;
+    const char *tag;
 } resolution_pair_t;
 
 typedef struct {
@@ -35,10 +36,12 @@ typedef struct {
 } pref_resolution_ctx_t;
 
 static const resolution_pair_t built_in_resolutions[] = {
-    {1280, 720, true},
-    {1920, 1080},
-    {2560, 1440},
-    {3840, 2160},
+    {1280, 720, true, NULL},
+    {1920, 1080, false, NULL},
+    {2560, 1440, false, NULL},
+    /* ~90% of 4K; stable on recent LG panels without full-4K input delay */
+    {3456, 1944, false, "3.5K"},
+    {3840, 2160, false, NULL},
 };
 
 static const int num_built_in_resolutions = sizeof(built_in_resolutions) / sizeof(resolution_pair_t);
@@ -70,8 +73,8 @@ lv_obj_t *pref_dropdown_res(lv_obj_t *parent, int native_w, int native_h, int ma
     bool is_16by9 = native_w <= 0 || native_h <= 0 || native_w * 9 == native_h * 16;
     bool using_custom = true;
 
-    // maximum 4 built-in resolutions + 1 native resolution + 1 custom resolution
-    pref_dropdown_int_pair_entry_t *entries = lv_mem_alloc(6 * sizeof(pref_dropdown_int_pair_entry_t));
+    // built-in resolutions + 1 native resolution + 1 custom resolution
+    pref_dropdown_int_pair_entry_t *entries = lv_mem_alloc(8 * sizeof(pref_dropdown_int_pair_entry_t));
     int num_entries = 0;
 
     char label_buf[32];
@@ -84,8 +87,11 @@ lv_obj_t *pref_dropdown_res(lv_obj_t *parent, int native_w, int native_h, int ma
             using_custom = false; // If the current values match a built-in resolution, we're not using custom
         }
 
+        const char *tag = built_in_resolutions[i].tag;
         if (builtin_w == native_w && builtin_h == native_h) {
             snprintf(label_buf, sizeof(label_buf), "%d * %d (Native)", builtin_w, builtin_h);
+        } else if (tag != NULL) {
+            snprintf(label_buf, sizeof(label_buf), "%d * %d (%s)", builtin_w, builtin_h, tag);
         } else {
             snprintf(label_buf, sizeof(label_buf), "%d * %d", builtin_w, builtin_h);
         }

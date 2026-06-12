@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "lv_theme_moonlight.h"
+#include "lv_theme_moonlight_colors.h"
 
 #include "util/font.h"
 #include "lvgl/ext/lv_child_group.h"
@@ -56,6 +57,28 @@ static void apply_cb(lv_theme_t *theme, lv_obj_t *obj) {
     bool set_font = true;
     if (lv_obj_has_class(obj, &lv_btn_class)) {
         lv_obj_set_style_flex_cross_place(obj, LV_FLEX_ALIGN_CENTER, 0);
+        lv_obj_t *parent = lv_obj_get_parent(obj);
+        if (parent == NULL || !lv_obj_check_type(parent, &lv_msgbox_class)) {
+            lv_obj_set_style_radius(obj, LV_DPX(10), 0);
+            lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE_ALT), 0);
+            lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE_HI), LV_STATE_PRESSED);
+            lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE_HI), LV_STATE_FOCUSED);
+            lv_obj_set_style_outline_color(obj, ml_color_hex(ML_COLOR_PRIMARY), LV_STATE_FOCUS_KEY);
+            lv_obj_set_style_outline_width(obj, LV_DPX(2), LV_STATE_FOCUS_KEY);
+            lv_obj_set_style_outline_opa(obj, LV_OPA_COVER, LV_STATE_FOCUS_KEY);
+            lv_obj_set_style_outline_pad(obj, LV_DPX(2), LV_STATE_FOCUS_KEY);
+            lv_obj_set_style_text_color(obj, ml_color_hex(ML_COLOR_TEXT), 0);
+        }
+    }
+    if (lv_obj_check_type(obj, &lv_obj_class) && lv_obj_get_parent(obj) != NULL) {
+        lv_obj_t *parent = lv_obj_get_parent(obj);
+        if (!lv_obj_check_type(parent, &lv_btn_class) && !lv_obj_check_type(parent, &lv_img_class)) {
+            const lv_opa_t bg_opa = lv_obj_get_style_bg_opa(obj, 0);
+            if (bg_opa > LV_OPA_TRANSP && bg_opa < LV_OPA_COVER) {
+                lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE), 0);
+            }
+        }
     }
     if (lv_obj_has_class(obj, &lv_label_class)) {
         lv_obj_t *parent = lv_obj_get_parent(obj);
@@ -80,6 +103,11 @@ static void apply_cb(lv_theme_t *theme, lv_obj_t *obj) {
         }
     }
     if (lv_obj_check_type(obj, &lv_textarea_class)) {
+        lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE_ALT), 0);
+        lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(obj, ml_color_hex(ML_COLOR_TEXT), 0);
+        lv_obj_set_style_border_color(obj, ml_color_hex(ML_COLOR_BORDER), 0);
+        lv_obj_set_style_border_width(obj, LV_DPX(1), 0);
         lv_obj_add_event_cb(obj, lv_start_text_input, LV_EVENT_FOCUSED, theme);
         lv_obj_add_event_cb(obj, lv_stop_text_input, LV_EVENT_DEFOCUSED, theme);
     } else if (lv_obj_check_type(obj, &lv_msgbox_class)) {
@@ -99,8 +127,8 @@ static void apply_cb(lv_theme_t *theme, lv_obj_t *obj) {
         lv_obj_add_event_cb(obj, msgbox_cancel, LV_EVENT_CANCEL, NULL);
         lv_obj_add_event_cb(obj, msgbox_destroy, LV_EVENT_DELETE, group);
     } else if (lv_obj_check_type(obj, &lv_msgbox_backdrop_class)) {
-        lv_obj_set_style_bg_color(obj, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(obj, LV_OPA_50, 0);
+        lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_BG), 0);
+        lv_obj_set_style_bg_opa(obj, LV_OPA_70, 0);
     } else if (lv_obj_check_type(obj, &lv_btnmatrix_class)) {
         lv_obj_t *parent = lv_obj_get_parent(obj);
         if (lv_obj_check_type(parent, &lv_msgbox_class)) {
@@ -110,6 +138,19 @@ static void apply_cb(lv_theme_t *theme, lv_obj_t *obj) {
     } else if (lv_obj_check_type(obj, &lv_dropdown_class)) {
         lv_obj_set_style_text_font(obj, lv_theme_moonlight_get_iconfont_large(obj), LV_PART_INDICATOR);
         lv_dropdown_set_symbol(obj, MAT_SYMBOL_ARROW_DROP_DOWN);
+        lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE_ALT), 0);
+        lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(obj, ml_color_hex(ML_COLOR_TEXT), 0);
+        lv_obj_set_style_border_color(obj, ml_color_hex(ML_COLOR_BORDER), 0);
+        lv_obj_set_style_border_width(obj, LV_DPX(1), 0);
+    } else if (lv_obj_check_type(obj, &lv_dropdownlist_class)) {
+        lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE), 0);
+        lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(obj, ml_color_hex(ML_COLOR_BORDER), 0);
+        lv_obj_set_style_border_width(obj, LV_DPX(1), 0);
+        lv_obj_set_style_text_color(obj, ml_color_hex(ML_COLOR_TEXT), 0);
+        lv_obj_set_style_bg_color(obj, ml_color_hex(ML_COLOR_SURFACE_HI), LV_PART_SELECTED);
+        lv_obj_set_style_text_color(obj, ml_color_hex(ML_COLOR_TEXT), LV_PART_SELECTED);
     } else if (lv_obj_check_type(obj, &lv_checkbox_class)) {
         lv_obj_set_style_text_font(obj, lv_theme_moonlight_get_iconfont_large(obj),
                                    LV_PART_INDICATOR | LV_STATE_CHECKED);

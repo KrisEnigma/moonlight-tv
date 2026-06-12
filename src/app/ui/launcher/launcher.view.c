@@ -14,6 +14,7 @@
 
 #include "app.h"
 #include "lvgl/theme/lv_theme_moonlight.h"
+#include "lvgl/theme/lv_theme_moonlight_colors.h"
 
 #define TOPBAR_HEIGHT 60
 #define TOPBAR_BTN_SIZE 40
@@ -56,7 +57,9 @@ lv_obj_t *launcher_win_create(lv_fragment_t *self, lv_obj_t *parent) {
     lv_style_set_radius(&controller->topbar_btn_style, LV_RADIUS_CIRCLE);
     lv_style_set_pad_all(&controller->topbar_btn_style, 0);
     lv_style_set_border_width(&controller->topbar_btn_style, 0);
-    lv_style_set_text_color(&controller->topbar_btn_style, lv_color_white());
+    lv_style_set_bg_color(&controller->topbar_btn_style, ml_color_hex(ML_COLOR_SURFACE_ALT));
+    lv_style_set_bg_opa(&controller->topbar_btn_style, LV_OPA_COVER);
+    lv_style_set_text_color(&controller->topbar_btn_style, ml_color_hex(ML_COLOR_TEXT));
 
     /* ---------------- Top bar (replaces the old sidebar nav) ---------------- */
     lv_obj_t *topbar = lv_obj_create(content);
@@ -66,8 +69,12 @@ lv_obj_t *launcher_win_create(lv_fragment_t *self, lv_obj_t *parent) {
     lv_obj_set_flex_flow(topbar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(topbar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_bg_opa(topbar, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(topbar, lv_color_darken(lv_color_hex(0x2f3237), 4), 0);
-    lv_obj_set_style_pad_hor(topbar, LV_DPX(16), 0);
+    lv_obj_set_style_bg_color(topbar, ml_color_hex(ML_COLOR_BG), 0);
+    lv_obj_set_style_border_side(topbar, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(topbar, LV_DPX(1), 0);
+    lv_obj_set_style_border_color(topbar, ml_color_hex(ML_COLOR_BORDER), 0);
+    lv_obj_set_style_border_opa(topbar, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_hor(topbar, LV_DPX(20), 0);
     lv_obj_set_style_pad_ver(topbar, LV_DPX(8), 0);
     lv_obj_set_style_pad_gap(topbar, LV_DPX(8), 0);
     lv_obj_clear_flag(topbar, LV_OBJ_FLAG_SCROLLABLE);
@@ -82,7 +89,7 @@ lv_obj_t *launcher_win_create(lv_fragment_t *self, lv_obj_t *parent) {
     /* Aurora title (left, next to logo). */
     lv_obj_t *title_label = lv_label_create(topbar);
     lv_obj_set_style_text_font(title_label, lv_theme_get_font_large(topbar), 0);
-    lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(title_label, ml_color_hex(ML_COLOR_TEXT), 0);
     lv_label_set_text_static(title_label, "Aurora");
 
     /* Spacer that grows to push the action buttons to the right edge. */
@@ -97,8 +104,10 @@ lv_obj_t *launcher_win_create(lv_fragment_t *self, lv_obj_t *parent) {
     lv_obj_add_flag(server_btn, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_set_height(server_btn, LV_DPX(TOPBAR_BTN_SIZE));
     lv_obj_set_style_pad_hor(server_btn, LV_DPX(14), 0);
-    lv_obj_set_style_radius(server_btn, LV_DPX(20), 0);
-    lv_obj_set_style_text_color(server_btn, lv_color_white(), 0);
+    lv_obj_set_style_radius(server_btn, LV_DPX(12), 0);
+    lv_obj_set_style_bg_color(server_btn, ml_color_hex(ML_COLOR_SURFACE_ALT), 0);
+    lv_obj_set_style_bg_opa(server_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(server_btn, ml_color_hex(ML_COLOR_TEXT), 0);
     lv_obj_set_layout(server_btn, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(server_btn, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(server_btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -134,10 +143,7 @@ lv_obj_t *launcher_win_create(lv_fragment_t *self, lv_obj_t *parent) {
     lv_obj_set_height(detail, LV_PCT(100));
     lv_obj_clear_flag(detail, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(detail, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(detail, lv_color_lighten(lv_color_black(), 30), 0);
-    lv_obj_set_style_shadow_color(detail, lv_color_black(), 0);
-    lv_obj_set_style_shadow_opa(detail, LV_OPA_50, 0);
-    lv_obj_set_style_shadow_width(detail, lv_dpx(5), 0);
+    lv_obj_set_style_bg_color(detail, ml_color_hex(ML_COLOR_BG), 0);
     lv_obj_set_style_border_width(detail, 0, 0);
     lv_obj_add_event_cb(detail, detail_group_add, LV_EVENT_CHILD_CREATED, controller);
 
@@ -168,7 +174,7 @@ static lv_obj_t *create_topbar_icon_btn(launcher_fragment_t *controller, lv_obj_
     lv_obj_add_style(btn, &controller->topbar_btn_style, 0);
     lv_obj_t *lbl = lv_label_create(btn);
     lv_obj_set_style_text_font(lbl, lv_theme_moonlight_get_iconfont_small(parent), 0);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl, ml_color_hex(ML_COLOR_TEXT), 0);
     lv_label_set_text_static(lbl, icon);
     lv_obj_center(lbl);
     lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);

@@ -64,9 +64,6 @@ typedef struct app_settings_t {
      * 0 = omit (host default frame pacing).
      */
     int client_refresh_rate_x100;
-    /** When true, negotiate COLOR_RANGE_FULL; when false, COLOR_RANGE_LIMITED (Moonlight Android-style toggle). */
-    bool force_full_color_range;
-
     char *conf_dir;
     char *ini_path;
     char *condb_path;
@@ -91,6 +88,8 @@ extern const size_t audio_config_len;
 #define RES_720P RES_MERGE(1280, 720)
 #define RES_1080P RES_MERGE(1920, 1080)
 #define RES_1440P RES_MERGE(2560, 1440)
+/** ~90% of 4K (3456×1944); stable on recent LG TVs without full-4K input delay */
+#define RES_3_5K RES_MERGE(3456, 1944)
 #define RES_1800P RES_MERGE(3200, 1800)
 #define RES_4K RES_MERGE(3840, 2160)
 

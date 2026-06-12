@@ -11,6 +11,9 @@ apt-get install -y -qq ./ares-package_0.1.4-1_amd64.deb 2>/dev/null || (dpkg -i 
 which ares-package || { echo "Erro: ares-package nao instalado"; exit 1; }
 
 cd /build
+# Windows bind mounts can leave stale git submodule lock files in .git/modules.
+find .git/modules -name "*.lock" -delete 2>/dev/null || true
+git submodule sync --recursive
 git submodule update --init --recursive
 rm -rf build/webos-easy_build
 
@@ -34,4 +37,4 @@ if [ ! -x "${SDK_ROOT}/bin/arm-webos-linux-gnueabi-gcc" ]; then
   echo "Erro: compilador webOS nao encontrado: ${SDK_ROOT}/bin/arm-webos-linux-gnueabi-gcc"
   exit 1
 fi
-./scripts/webos/easy_build.sh -DCMAKE_BUILD_TYPE=Release
+CI=1 ./scripts/webos/easy_build.sh -DCMAKE_BUILD_TYPE=Release

@@ -75,7 +75,6 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     config->show_stats_compact = false;
     config->stick_deadzone = 7;
     config->client_refresh_rate_x100 = 0;
-    config->force_full_color_range = true;
 
     config->conf_dir = conf_dir;
     config->ini_path = path_join(conf_dir, CONF_NAME_MOONLIGHT);
@@ -132,7 +131,6 @@ bool settings_save(app_settings_t *config) {
     ini_write_bool(fp, "show_stats_on_start", config->show_stats_on_start);
     ini_write_bool(fp, "show_stats_compact", config->show_stats_compact);
     ini_write_int(fp, "client_refresh_rate_x100", config->client_refresh_rate_x100);
-    ini_write_bool(fp, "force_full_color_range", config->force_full_color_range);
 
     ini_write_section(fp, "audio");
     ini_write_string(fp, "backend", config->audio_backend);
@@ -244,7 +242,7 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
             config->client_refresh_rate_x100 = 24000;
         }
     } else if (INI_FULL_MATCH("video", "force_full_color_range")) {
-        config->force_full_color_range = INI_IS_TRUE(value);
+        /* Legacy: full range is enabled automatically when HDR is on. */
     } else if (INI_NAME_MATCH("surround")) {
         config->stream.audioConfiguration = parse_audio_config(value);
     } else if (INI_NAME_MATCH("sops")) {

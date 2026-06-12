@@ -318,49 +318,69 @@ static bool coverloader_filecache_get(coverloader_req_t *req) {
         }
         decoded = true_color;
     }
-    int sw = decoded->w, sh = decoded->h;
-    while (sw > req->target_width * 1.5 || sh > req->target_height * 1.5) {
-        sw /= 2;
-        sh /= 2;
-    }
-    if (!sw || !sh) {
-        // Image is too small to display
+    const int sw = decoded->w, sh = decoded->h;
+    if (sw < 1 || sh < 1) {
         SDL_FreeSurface(decoded);
         return false;
     }
-    double srcratio = sw / (double) sh, dstratio = req->target_width / (double) req->target_height;
-    SDL_Rect srcrect;
-    if (srcratio > dstratio) {
-        // Source is wider than destination
-        srcrect.h = sh;
-        srcrect.w = (int) (sh * dstratio);
-        srcrect.y = 0;
-        srcrect.x = (sw - srcrect.w) / 2;
-    } else {
-        // Destination is wider than source
-        srcrect.w = sw;
-        srcrect.h = (int) (sw / dstratio);
-        srcrect.x = 0;
-        srcrect.y = (sh - srcrect.h) / 2;
-    }
-    subimage_info_t *info = SDL_malloc(sizeof(subimage_info_t));
-    info->w = req->target_width;
-    info->h = req->target_height;
-    info->rect = srcrect;
 
-    if (sw == decoded->w && sh == decoded->h) {
-        decoded->userdata = info;
-        req->cached = decoded;
-        return true;
+    const int disp_w = req->target_width;
+    const int disp_h = req->target_height;
+    /* 2× canvas for sharper downscale on 4K panels; LVGL maps it to disp_w × disp_h. */
+    int tex_w = disp_w * 2;
+    int tex_h = disp_h * 2;
+    if (tex_w < 1) {
+        tex_w = 1;
+    }
+    if (tex_h < 1) {
+        tex_h = 1;
+    }
+
+    const double scale_w = tex_w / (double) sw;
+    const double scale_h = tex_h / (double) sh;
+    const double scale = scale_w < scale_h ? scale_w : scale_h;
+    int fit_w = (int) (sw * scale + 0.5);
+    int fit_h = (int) (sh * scale + 0.5);
+    if (fit_w < 1) {
+        fit_w = 1;
+    }
+    if (fit_h < 1) {
+        fit_h = 1;
     }
 
     const SDL_PixelFormat *format = decoded->format;
-    SDL_Surface *scaled = SDL_CreateRGBSurface(0, sw, sh, format->BitsPerPixel,
+    SDL_Surface *canvas = SDL_CreateRGBSurface(0, tex_w, tex_h, format->BitsPerPixel,
                                                format->Rmask, format->Gmask, format->Bmask, format->Amask);
-    SDL_BlitScaled(decoded, NULL, scaled, NULL);
+    if (canvas == NULL) {
+        SDL_FreeSurface(decoded);
+        return false;
+    }
+    SDL_FillRect(canvas, NULL, SDL_MapRGBA(format, 0, 0, 0, 255));
+
+    SDL_Rect dst = {
+            .x = (tex_w - fit_w) / 2,
+            .y = (tex_h - fit_h) / 2,
+            .w = fit_w,
+            .h = fit_h,
+    };
+    if (SDL_BlitScaled(decoded, NULL, canvas, &dst) != 0) {
+        SDL_FreeSurface(canvas);
+        SDL_FreeSurface(decoded);
+        return false;
+    }
     SDL_FreeSurface(decoded);
-    scaled->userdata = info;
-    req->cached = scaled;
+
+    subimage_info_t *info = SDL_malloc(sizeof(subimage_info_t));
+    if (info == NULL) {
+        SDL_FreeSurface(canvas);
+        return false;
+    }
+    info->w = disp_w;
+    info->h = disp_h;
+    info->rect = (SDL_Rect) {0, 0, tex_w, tex_h};
+
+    canvas->userdata = info;
+    req->cached = canvas;
     return true;
 }
 

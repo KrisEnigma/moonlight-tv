@@ -42,6 +42,8 @@ typedef struct {
     lv_obj_t *close_btn;
 
     lv_obj_t *active_dropdown;
+    /** Set when Back closes an open dropdown; suppresses closing the pane popup on the same press. */
+    bool suppress_pane_back;
 
     /** Launcher overlay: second AppBar row + dimmed body (embedded mode only). */
     lv_obj_t *embed_root;

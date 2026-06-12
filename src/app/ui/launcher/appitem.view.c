@@ -3,6 +3,7 @@
 
 #include "draw/sdl/lv_draw_sdl_utils.h"
 #include "lvgl/theme/lv_theme_moonlight.h"
+#include "lvgl/theme/lv_theme_moonlight_colors.h"
 
 static void appitem_holder_free_cb(lv_event_t *event);
 
@@ -19,6 +20,7 @@ lv_obj_t *appitem_view(apps_fragment_t *controller, lv_obj_t *parent) {
     lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_style(item, &styles->cover, 0);
     lv_obj_set_size(item, controller->col_width, controller->col_height);
+    lv_img_set_antialias(item, true);
 
     lv_obj_set_style_outline_opa(item, LV_OPA_COVER, LV_STATE_FOCUS_KEY);
 
@@ -42,15 +44,15 @@ lv_obj_t *appitem_view(apps_fragment_t *controller, lv_obj_t *parent) {
     lv_obj_t *title = lv_label_create(item);
     const lv_font_t *font = lv_theme_get_font_small(item);
     lv_obj_set_style_text_font(title, font, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xf1f5f9), 0);
+    lv_obj_set_style_text_color(title, ml_color_hex(ML_COLOR_TEXT), 0);
     lv_coord_t th = lv_obj_get_style_text_font(title, 0)->line_height + LV_DPX(10);
     lv_obj_set_size(title, LV_PCT(100), th);
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
     lv_obj_set_style_pad_hor(title, LV_DPX(8), 0);
     lv_obj_set_style_pad_ver(title, LV_DPX(4), 0);
-    lv_obj_set_style_bg_color(title, lv_color_hex(0x0f172a), 0);
-    lv_obj_set_style_bg_opa(title, (lv_opa_t) ((255 * 85) / 100), 0);
+    lv_obj_set_style_bg_color(title, ml_color_hex(ML_COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(title, (lv_opa_t) ((255 * 72) / 100), 0);
     lv_obj_align(title, LV_ALIGN_BOTTOM_MID, 0, 0);
 
     appitem_viewholder_t *holder = (appitem_viewholder_t *) malloc(sizeof(appitem_viewholder_t));
@@ -68,16 +70,16 @@ lv_obj_t *appitem_view(apps_fragment_t *controller, lv_obj_t *parent) {
 void appitem_style_init(appitem_styles_t *style) {
     lv_style_init(&style->cover);
     lv_style_set_pad_all(&style->cover, 0);
-    lv_style_set_radius(&style->cover, LV_DPX(14));
+    lv_style_set_radius(&style->cover, LV_DPX(10));
     lv_style_set_clip_corner(&style->cover, true);
     lv_style_set_border_width(&style->cover, LV_DPX(1));
-    lv_style_set_border_color(&style->cover, lv_color_hex(0x334155));
-    lv_style_set_border_opa(&style->cover, LV_OPA_80);
-    lv_style_set_shadow_opa(&style->cover, LV_OPA_50);
-    lv_style_set_shadow_width(&style->cover, LV_DPX(20));
-    lv_style_set_shadow_ofs_y(&style->cover, LV_DPX(8));
-    lv_style_set_shadow_color(&style->cover, lv_color_hex(0x020617));
-    lv_style_set_outline_color(&style->cover, lv_color_hex(0x38bdf8));
+    lv_style_set_border_color(&style->cover, ml_color_hex(ML_COLOR_BORDER));
+    lv_style_set_border_opa(&style->cover, LV_OPA_COVER);
+    lv_style_set_shadow_opa(&style->cover, LV_OPA_40);
+    lv_style_set_shadow_width(&style->cover, LV_DPX(16));
+    lv_style_set_shadow_ofs_y(&style->cover, LV_DPX(6));
+    lv_style_set_shadow_color(&style->cover, ml_color_hex(ML_COLOR_BG));
+    lv_style_set_outline_color(&style->cover, ml_color_hex(ML_COLOR_PRIMARY));
     lv_style_set_outline_width(&style->cover, LV_DPX(3));
     lv_style_set_outline_opa(&style->cover, LV_OPA_TRANSP);
     lv_style_set_outline_pad(&style->cover, LV_DPX(2));
@@ -86,14 +88,14 @@ void appitem_style_init(appitem_styles_t *style) {
     lv_style_set_width(&style->btn, LV_DPX(44));
     lv_style_set_height(&style->btn, LV_DPX(44));
     lv_style_set_radius(&style->btn, LV_RADIUS_CIRCLE);
-    lv_style_set_bg_color(&style->btn, lv_color_hex(0x38bdf8));
+    lv_style_set_bg_color(&style->btn, ml_color_hex(ML_COLOR_PRIMARY));
     lv_style_set_bg_opa(&style->btn, LV_OPA_COVER);
-    lv_style_set_text_color(&style->btn, lv_color_hex(0x0f172a));
+    lv_style_set_text_color(&style->btn, ml_color_hex(ML_COLOR_TEXT));
     lv_style_set_border_opa(&style->btn, LV_OPA_TRANSP);
     lv_style_set_text_font(&style->btn, lv_theme_moonlight_get_iconfont_large(lv_scr_act()));
     lv_style_set_shadow_width(&style->btn, LV_DPX(8));
-    lv_style_set_shadow_color(&style->btn, lv_color_hex(0x38bdf8));
-    lv_style_set_shadow_opa(&style->btn, LV_OPA_40);
+    lv_style_set_shadow_color(&style->btn, ml_color_hex(ML_COLOR_PRIMARY));
+    lv_style_set_shadow_opa(&style->btn, LV_OPA_50);
     /* Temporary solution for LVGL 8.3.0 */
     lv_style_set_text_align(&style->btn, LV_TEXT_ALIGN_CENTER);
     lv_style_set_pad_ver(&style->btn, LV_DPX(10));

@@ -4,6 +4,8 @@
 
 #include "pref_obj.h"
 
+#include "lvgl/theme/lv_theme_moonlight_colors.h"
+
 typedef union pref_attrs_t {
     struct {
         bool *ref;
@@ -246,7 +248,7 @@ lv_obj_t *pref_header(lv_obj_t *parent, const char *title) {
     lv_obj_set_style_pad_bottom(header, LV_DPX(4), 0);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_opa(header, LV_OPA_30, 0);
-    lv_obj_set_style_border_color(header, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_border_color(header, ml_color_hex(ML_COLOR_BORDER), 0);
     lv_obj_set_style_border_width(header, LV_DPX(1), 0);
     return header;
 }
@@ -345,10 +347,13 @@ static void pref_dropdown_key_hack_cb(lv_event_t *event) {
         case LV_KEY_DOWN:
         case LV_KEY_LEFT:
         case LV_KEY_RIGHT: {
-            if (!state->opened && lv_dropdown_is_open(target)) {
+            if (lv_dropdown_is_open(target)) {
+                if (state->opened) {
+                    return;
+                }
                 lv_dropdown_close(target);
+                return;
             }
-            lv_event_stop_processing(event);
             break;
         }
     }

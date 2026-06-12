@@ -4,6 +4,7 @@
 
 #include "lvgl/lv_disp_drv_app.h"
 #include "lvgl/theme/lv_theme_moonlight.h"
+#include "lvgl/theme/lv_theme_moonlight_colors.h"
 #include "draw/sdl/lv_draw_sdl_utils.h"
 
 #include "stream/session.h"
@@ -94,8 +95,9 @@ void app_ui_open(app_ui_t *ui, bool open_launcher, const app_launch_params_t *pa
     ui->disp = disp;
 
     lv_theme_t *parent_theme = lv_disp_get_theme(ui->disp);
-    ui->theme.color_primary = parent_theme->color_primary;
-    ui->theme.color_secondary = parent_theme->color_secondary;
+    ui->theme.color_primary = ml_color_hex(ML_COLOR_PRIMARY);
+    ui->theme.color_secondary = ml_color_hex(ML_COLOR_PRIMARY_DIM);
+    (void) parent_theme;
     lv_theme_set_parent(&ui->theme, parent_theme);
     lv_disp_set_theme(ui->disp, &ui->theme);
 

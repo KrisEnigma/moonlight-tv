@@ -93,13 +93,6 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
 
     pref_header(view, locstr("Video Settings"));
 
-    lv_obj_t *full_range_cb =
-            pref_checkbox(view, locstr("Full range YUV"), &app_configuration->force_full_color_range, false);
-    pref_desc_label(view,
-                    locstr("Request full (0–255) video levels from the encoder when supported (Moonlight-style)."),
-                    false);
-    lv_obj_add_event_cb(full_range_cb, module_changed_cb, LV_EVENT_VALUE_CHANGED, controller);
-
     lv_obj_t *hevc_checkbox = pref_checkbox(view, locstr("Use H265 when possible"), &app_configuration->hevc, false);
     lv_obj_t *hevc_hint = pref_desc_label(view, NULL, false);
     if (app->ss4s.video_cap.codecs & SS4S_VIDEO_H265) {
@@ -186,7 +179,8 @@ static void hdr_state_update(video_pane_t *controller) {
     } else {
         lv_obj_clear_state(controller->hdr_checkbox, LV_STATE_DISABLED);
         lv_label_set_text(controller->hdr_hint,
-                          locstr("HDR10 (PQ) when the host streams HDR (HEVC Main10 or AV1 Main10)."));
+                          locstr("HDR10 (PQ) when the host streams HDR (HEVC Main10 or AV1 Main10). "
+                                 "Enabling HDR also uses the full video color range (Android-style)."));
     }
 }
 

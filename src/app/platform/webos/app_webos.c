@@ -30,7 +30,15 @@ void app_init_locale() {
             } else {
                 strncpy(locale_system, locales[i].language, sizeof(locale_system));
             }
-            i18n_setlocale(locale_system);
+            locale_system[sizeof(locale_system) - 1] = '\0';
+            const i18n_entry_t *entry = i18n_entry(locale_system);
+            if (entry == NULL || strcmp(entry->locale, "auto") == 0) {
+                continue;
+            }
+            i18n_setlocale(entry->locale);
+            if (i18n_is_loaded()) {
+                break;
+            }
         }
         SDL_free(locales);
     }

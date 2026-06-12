@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 if [ ! -f scripts/webos/easy_build.sh ]; then
   echo "Please invoke this script in project root directory"
@@ -38,12 +39,16 @@ if [ ! -d "${CMAKE_BINARY_DIR}" ]; then
   mkdir -p "${CMAKE_BINARY_DIR}"
 fi
 
-BUILD_OPTIONS="-DBUILD_TESTS=OFF"
+BUILD_OPTIONS="-DBUILD_TESTS=OFF -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DTHREADS_PTHREAD_ARG=2"
 # buildroot-nc4 SDK: avoid CMake staying on host /usr/bin/cc if the toolchain file does not set CC.
 _sdk_root="$(dirname "$(dirname "$(dirname "${TOOLCHAIN_FILE}")")")"
 _webos_gcc="${_sdk_root}/bin/arm-webos-linux-gnueabi-gcc"
+_webos_gxx="${_sdk_root}/bin/arm-webos-linux-gnueabi-g++"
 if [ -x "${_webos_gcc}" ]; then
   BUILD_OPTIONS="${BUILD_OPTIONS} -DCMAKE_C_COMPILER=${_webos_gcc}"
+fi
+if [ -x "${_webos_gxx}" ]; then
+  BUILD_OPTIONS="${BUILD_OPTIONS} -DCMAKE_CXX_COMPILER=${_webos_gxx}"
 fi
 
 # shellcheck disable=SC2068,SC2086

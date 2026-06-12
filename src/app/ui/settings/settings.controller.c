@@ -11,8 +11,10 @@
 #include "util/user_event.h"
 #include "util/font.h"
 #include "util/i18n.h"
+#include "app.h"
 #include "stream/session.h"
 #include "lvgl/theme/lv_theme_moonlight.h"
+#include "lvgl/theme/lv_theme_moonlight_colors.h"
 
 #include "../launcher/launcher.controller.h"
 
@@ -70,6 +72,8 @@ static bool settings_try_close(settings_controller_t *fragment);
 
 static void stream_reconnect_confirm_cb(lv_event_t *e);
 
+static void locale_restart_confirm_cb(lv_event_t *e);
+
 static void settings_apply_locale_if_needed(settings_controller_t *controller);
 
 static void pane_child_added(lv_event_t *e);
@@ -77,6 +81,8 @@ static void pane_child_added(lv_event_t *e);
 static void settings_launcher_detach(settings_controller_t *fragment);
 
 static void settings_close_pane_popup(settings_controller_t *c);
+
+static void settings_request_close_pane_popup(settings_controller_t *c);
 
 static void settings_show_pane_popup(settings_controller_t *c, const lv_fragment_class_t *cls);
 
@@ -91,6 +97,26 @@ static void embed_popup_add_objs_recursive(lv_obj_t *parent, lv_group_t *g);
 static lv_obj_t *embed_popup_first_focusable(lv_obj_t *parent);
 
 static void embed_popup_attach_key_handlers(lv_obj_t *parent, settings_controller_t *c);
+
+static void settings_pane_fragment_destroy(settings_controller_t *c);
+
+static void settings_style_pane_msgbox_amoled(lv_obj_t *mbox);
+
+static void on_textarea_focused(lv_event_t *e);
+
+static void on_textarea_defocused(lv_event_t *e);
+
+static void embed_popup_cancel_cb(lv_event_t *e);
+
+static void settings_dropdown_cancel_cb(lv_event_t *e);
+
+static bool settings_dropdown_list_open(settings_controller_t *c, lv_obj_t *target);
+
+static bool settings_close_dropdown_on_back(settings_controller_t *c, lv_obj_t *target);
+
+static void pane_child_attach_handlers(settings_controller_t *controller, lv_obj_t *child, bool popup);
+
+static void pane_popup_child_added(lv_event_t *e);
 
 #define UI_IS_MINI(width) ((width) < LV_DPX(240))
 
@@ -340,27 +366,54 @@ static void on_detail_key(lv_event_t *e) {
     if (controller->pane_popup_group != NULL) {
         switch (key) {
             case LV_KEY_ESC:
-                if (controller->active_dropdown) {
-                    lv_dropdown_close(controller->active_dropdown);
-                    controller->active_dropdown = NULL;
+                if (lv_obj_check_type(target, &lv_textarea_class) && lv_group_get_editing(nav_detail)) {
+                    lv_group_set_editing(nav_detail, false);
                     return;
                 }
-                settings_close_pane_popup(controller);
+                if (settings_close_dropdown_on_back(controller, target)) {
+                    return;
+                }
+                if (controller->pane_mbox != NULL) {
+                    lv_event_send(controller->pane_mbox, LV_EVENT_CANCEL, lv_indev_get_act());
+                }
+                return;
+            case LV_KEY_ENTER:
+                if (lv_obj_has_class(target, &lv_dropdown_class)) {
+                    if (!lv_dropdown_is_open(target)) {
+                        lv_dropdown_open(target);
+                        controller->active_dropdown = target;
+                        lv_event_send(target, LV_EVENT_RELEASED, NULL);
+                    }
+                    return;
+                }
+                if (lv_obj_check_type(target, &lv_textarea_class)) {
+                    lv_group_set_editing(nav_detail, true);
+                    return;
+                }
                 return;
             case LV_KEY_UP:
-                if (controller->active_dropdown) {
+                if (settings_dropdown_list_open(controller, target)) {
+                    return;
+                }
+                if (lv_obj_check_type(target, &lv_textarea_class) && lv_group_get_editing(nav_detail)) {
                     return;
                 }
                 lv_group_focus_prev(nav_detail);
                 return;
             case LV_KEY_DOWN:
-                if (controller->active_dropdown) {
+                if (settings_dropdown_list_open(controller, target)) {
+                    return;
+                }
+                if (lv_obj_check_type(target, &lv_textarea_class) && lv_group_get_editing(nav_detail)) {
                     return;
                 }
                 lv_group_focus_next(nav_detail);
                 return;
             case LV_KEY_LEFT:
-                if (controller->active_dropdown) {
+                if (settings_dropdown_list_open(controller, target)) {
+                    return;
+                }
+                if (lv_obj_check_type(target, &lv_textarea_class) && lv_group_get_editing(nav_detail)) {
                     return;
                 }
                 if (detail_item_needs_lrkey(target)) {
@@ -369,15 +422,21 @@ static void on_detail_key(lv_event_t *e) {
                 lv_group_focus_prev(nav_detail);
                 return;
             case LV_KEY_RIGHT:
-                if (controller->active_dropdown) {
+                if (settings_dropdown_list_open(controller, target)) {
+                    return;
+                }
+                if (lv_obj_check_type(target, &lv_textarea_class) && lv_group_get_editing(nav_detail)) {
                     return;
                 }
                 if (detail_item_needs_lrkey(target)) {
                     return;
                 }
                 if (lv_obj_has_class(target, &lv_dropdown_class)) {
-                    lv_dropdown_close(target);
-                    controller->active_dropdown = NULL;
+                    if (!lv_dropdown_is_open(target)) {
+                        lv_dropdown_open(target);
+                        controller->active_dropdown = target;
+                        lv_event_send(target, LV_EVENT_RELEASED, NULL);
+                    }
                     return;
                 }
                 lv_group_focus_next(nav_detail);
@@ -388,25 +447,31 @@ static void on_detail_key(lv_event_t *e) {
     }
 
     switch (key) {
+        case LV_KEY_ESC: {
+            if (settings_close_dropdown_on_back(controller, target)) {
+                lv_event_stop_bubbling(e);
+            }
+            break;
+        }
         case LV_KEY_UP: {
-            if (controller->active_dropdown) { return; }
+            if (settings_dropdown_list_open(controller, target)) { return; }
             lv_group_focus_prev(nav_detail);
             break;
         }
         case LV_KEY_DOWN: {
-            if (controller->active_dropdown) { return; }
+            if (settings_dropdown_list_open(controller, target)) { return; }
             lv_group_focus_next(nav_detail);
             break;
         }
         case LV_KEY_LEFT: {
             if (detail_item_needs_lrkey(target)) { return; }
-            if (controller->active_dropdown) { return; }
+            if (settings_dropdown_list_open(controller, target)) { return; }
             detail_defocus(controller, e);
             break;
         }
         case LV_KEY_RIGHT: {
             if (detail_item_needs_lrkey(target)) { return; }
-            if (controller->active_dropdown) { return; }
+            if (settings_dropdown_list_open(controller, target)) { return; }
             if (lv_obj_has_class(target, &lv_dropdown_class)) {
                 lv_dropdown_close(target);
                 controller->active_dropdown = NULL;
@@ -419,8 +484,8 @@ static void on_detail_key(lv_event_t *e) {
 static void on_back_request(lv_event_t *e) {
     if (lv_event_get_param(e) == NULL) { return; }
     settings_controller_t *controller = e->user_data;
-    if (controller->active_dropdown) {
-        controller->active_dropdown = NULL;
+    lv_obj_t *target = lv_event_get_target(e);
+    if (settings_close_dropdown_on_back(controller, target)) {
         return;
     }
     if (lv_obj_has_state(controller->detail, LV_STATE_FOCUS_KEY)) {
@@ -505,9 +570,11 @@ static void on_tab_content_key(lv_event_t *e) {
 static bool detail_item_needs_lrkey(lv_obj_t *obj) {
     if (lv_obj_has_class(obj, &lv_slider_class)) {
         return true;
-    } else {
-        return false;
     }
+    if (lv_obj_check_type(obj, &lv_textarea_class)) {
+        return true;
+    }
+    return false;
 }
 
 static void detail_defocus(settings_controller_t *controller, lv_event_t *e) {
@@ -550,6 +617,19 @@ static void settings_finish_close(settings_controller_t *fragment) {
 }
 
 static bool settings_try_close(settings_controller_t *fragment) {
+#ifdef FEATURE_I18N_LANGUAGE_SETTINGS
+    if (fragment->needs_locale_reapply && app_configuration->language != NULL && app_configuration->language[0] != '\0' &&
+        strcmp(app_configuration->language, "auto") != 0) {
+        static const char *btn_txts[] = {translatable("Later"), translatable("Restart app"), ""};
+        lv_obj_t *msgbox = lv_msgbox_create_i18n(NULL, NULL,
+                                                 locstr("Language changes take effect after restarting the app. "
+                                                        "Restart now?"),
+                                                 btn_txts, false);
+        lv_obj_center(msgbox);
+        lv_obj_add_event_cb(msgbox, locale_restart_confirm_cb, LV_EVENT_VALUE_CHANGED, fragment);
+        return true;
+    }
+#endif
     if (fragment->needs_stream_reconnect && fragment->app->session != NULL && session_is_streaming(fragment->app->session)) {
         static const char *btn_txts[] = {translatable("Later"), translatable("Reconnect streaming"), ""};
         lv_obj_t *msgbox =
@@ -580,24 +660,123 @@ static void stream_reconnect_confirm_cb(lv_event_t *e) {
     settings_finish_close(fragment);
 }
 
+static void locale_restart_confirm_cb(lv_event_t *e) {
+    settings_controller_t *fragment = lv_event_get_user_data(e);
+    lv_obj_t *msgbox = lv_event_get_current_target(e);
+    const bool restart = lv_msgbox_get_active_btn(msgbox) == 1;
+    lv_msgbox_close_async(msgbox);
+    fragment->needs_locale_reapply = false;
+    i18n_setlocale(app_configuration->language);
+    settings_finish_close(fragment);
+    if (restart) {
+        app_request_exit();
+    }
+}
+
 static void embed_cancel_cb(lv_event_t *e) {
     settings_controller_t *c = lv_event_get_user_data(e);
-    if (c->pane_popup_group != NULL) {
-        settings_close_pane_popup(c);
+    if (c->pane_mbox != NULL) {
+        settings_request_close_pane_popup(c);
         return;
     }
     (void) settings_try_close(c);
 }
 
-static void pane_child_added(lv_event_t *e) {
-    settings_controller_t *controller = lv_event_get_user_data(e);
-    lv_obj_t *child = lv_event_get_param(e);
-    if (!child || !lv_obj_is_group_def(child)) { return; }
+static void pane_child_attach_handlers(settings_controller_t *controller, lv_obj_t *child, bool popup) {
+    if (!child || !lv_obj_is_group_def(child)) {
+        return;
+    }
     lv_obj_add_flag(child, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_event_cb(child, on_detail_key, LV_EVENT_KEY, controller);
     if (lv_obj_has_class(child, &lv_dropdown_class)) {
         lv_obj_add_event_cb(child, on_dropdown_clicked, LV_EVENT_CLICKED, controller);
+        lv_obj_add_event_cb(child, on_dropdown_clicked, LV_EVENT_VALUE_CHANGED, controller);
+        if (popup) {
+            lv_obj_add_event_cb(child, settings_dropdown_cancel_cb, LV_EVENT_CANCEL, controller);
+        }
     }
+    if (lv_obj_check_type(child, &lv_textarea_class)) {
+        lv_obj_add_event_cb(child, on_textarea_focused, LV_EVENT_FOCUSED, controller);
+        lv_obj_add_event_cb(child, on_textarea_defocused, LV_EVENT_DEFOCUSED, controller);
+    }
+}
+
+static void pane_child_added(lv_event_t *e) {
+    pane_child_attach_handlers(lv_event_get_user_data(e), lv_event_get_param(e), false);
+}
+
+static void pane_popup_child_added(lv_event_t *e) {
+    settings_controller_t *c = lv_event_get_user_data(e);
+    lv_obj_t *child = lv_event_get_param(e);
+    embed_popup_attach_key_handlers(child, c);
+    embed_popup_add_objs_recursive(child, c->pane_popup_group);
+}
+
+static void on_textarea_focused(lv_event_t *e) {
+    settings_controller_t *controller = lv_event_get_user_data(e);
+    lv_group_t *group = controller->pane_popup_group ? controller->pane_popup_group : controller->detail_group;
+    if (group) {
+        lv_group_set_editing(group, false);
+    }
+}
+
+static void on_textarea_defocused(lv_event_t *e) {
+    settings_controller_t *controller = lv_event_get_user_data(e);
+    lv_group_t *group = controller->pane_popup_group ? controller->pane_popup_group : controller->detail_group;
+    if (group) {
+        lv_group_set_editing(group, false);
+    }
+}
+
+static bool settings_dropdown_list_open(settings_controller_t *c, lv_obj_t *target) {
+    if (c->active_dropdown != NULL && lv_dropdown_is_open(c->active_dropdown)) {
+        return true;
+    }
+    return target != NULL && lv_obj_has_class(target, &lv_dropdown_class) && lv_dropdown_is_open(target);
+}
+
+static bool settings_close_dropdown_on_back(settings_controller_t *c, lv_obj_t *target) {
+    lv_obj_t *dropdown = NULL;
+    if (c->active_dropdown != NULL && lv_dropdown_is_open(c->active_dropdown)) {
+        dropdown = c->active_dropdown;
+    } else if (target != NULL && lv_obj_has_class(target, &lv_dropdown_class) && lv_dropdown_is_open(target)) {
+        dropdown = target;
+    }
+    if (dropdown == NULL) {
+        return false;
+    }
+    c->active_dropdown = NULL;
+    c->suppress_pane_back = true;
+    lv_dropdown_close(dropdown);
+    return true;
+}
+
+static void settings_dropdown_cancel_cb(lv_event_t *e) {
+    settings_controller_t *c = lv_event_get_user_data(e);
+    lv_obj_t *target = lv_event_get_target(e);
+    if (settings_close_dropdown_on_back(c, target)) {
+        lv_event_stop_bubbling(e);
+        return;
+    }
+    c->active_dropdown = NULL;
+    lv_event_stop_bubbling(e);
+}
+
+static void embed_popup_cancel_cb(lv_event_t *e) {
+    settings_controller_t *c = lv_event_get_user_data(e);
+    if (c->pane_mbox == NULL || lv_event_get_current_target(e) != c->pane_mbox) {
+        return;
+    }
+    lv_group_t *group = c->pane_popup_group;
+    lv_obj_t *focused = group ? lv_group_get_focused(group) : NULL;
+    if (lv_obj_check_type(focused, &lv_textarea_class) && group && lv_group_get_editing(group)) {
+        lv_group_set_editing(group, false);
+        return;
+    }
+    if (settings_close_dropdown_on_back(c, focused)) {
+        return;
+    }
+    settings_request_close_pane_popup(c);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -628,6 +807,24 @@ static void settings_launcher_detach(settings_controller_t *fragment) {
     }
 }
 
+static void settings_pane_fragment_destroy(settings_controller_t *c) {
+    if (c->pane_fragment == NULL) {
+        return;
+    }
+    lv_fragment_t *pane = c->pane_fragment;
+    c->pane_fragment = NULL;
+    /* Widget tree is owned by the msgbox; do not lv_obj_del() again from the fragment. */
+    pane->obj = NULL;
+    const lv_fragment_class_t *cls = pane->cls;
+    if (cls != NULL && cls->destructor_cb != NULL) {
+        cls->destructor_cb(pane);
+    }
+    if (pane->child_manager != NULL) {
+        lv_fragment_manager_del(pane->child_manager);
+    }
+    lv_mem_free(pane);
+}
+
 static void embed_pane_mbox_delete_cb(lv_event_t *e) {
     settings_controller_t *c = lv_event_get_user_data(e);
     if (c->pane_popup_group != NULL) {
@@ -635,40 +832,46 @@ static void embed_pane_mbox_delete_cb(lv_event_t *e) {
         lv_group_del(c->pane_popup_group);
         c->pane_popup_group = NULL;
     }
-    if (c->pane_fragment != NULL) {
-        lv_fragment_del(c->pane_fragment);
-        c->pane_fragment = NULL;
-    }
+    settings_pane_fragment_destroy(c);
     c->pane_mbox = NULL;
+    c->active_dropdown = NULL;
     if (c->launcher_host) {
         settings_embed_refocus_appbar(c);
     }
+}
+
+static void settings_close_pane_popup_async_cb(void *user_data) {
+    settings_controller_t *c = user_data;
+    if (!c->pane_mbox) {
+        return;
+    }
+    if (c->suppress_pane_back) {
+        c->suppress_pane_back = false;
+        return;
+    }
+    lv_obj_t *mbox = c->pane_mbox;
+    c->pane_mbox = NULL;
+    c->active_dropdown = NULL;
+    lv_msgbox_close(mbox);
+}
+
+static void settings_request_close_pane_popup(settings_controller_t *c) {
+    if (!c->pane_mbox) {
+        return;
+    }
+    lv_async_call_cancel(settings_close_pane_popup_async_cb, c);
+    lv_async_call(settings_close_pane_popup_async_cb, c);
 }
 
 static void settings_close_pane_popup(settings_controller_t *c) {
     if (!c->pane_mbox) {
         return;
     }
+    lv_async_call_cancel(settings_close_pane_popup_async_cb, c);
     lv_obj_t *mbox = c->pane_mbox;
     c->pane_mbox = NULL;
-
-    if (c->pane_popup_group != NULL) {
-        app_input_remove_modal_group(&c->app->ui.input, c->pane_popup_group);
-        lv_group_del(c->pane_popup_group);
-        c->pane_popup_group = NULL;
-    }
-
-    if (c->pane_fragment) {
-        lv_fragment_del(c->pane_fragment);
-        c->pane_fragment = NULL;
-    }
-    /* Synchronous close: async would run DELETE after settings_finish_close may have freed
-     * this controller, leaving embed_pane_mbox_delete_cb with a dangling user_data. */
+    c->active_dropdown = NULL;
     lv_msgbox_close(mbox);
-
-    if (c->launcher_host) {
-        settings_embed_refocus_appbar(c);
-    }
 }
 
 static void embed_popup_add_objs_recursive(lv_obj_t *parent, lv_group_t *g) {
@@ -702,10 +905,7 @@ static void embed_popup_attach_key_handlers(lv_obj_t *parent, settings_controlle
     for (uint32_t i = 0; i < n; i++) {
         lv_obj_t *ch = lv_obj_get_child(parent, i);
         embed_popup_attach_key_handlers(ch, c);
-        if (lv_obj_is_group_def(ch)) {
-            lv_obj_add_flag(ch, LV_OBJ_FLAG_EVENT_BUBBLE);
-            lv_obj_add_event_cb(ch, on_detail_key, LV_EVENT_KEY, c);
-        }
+        pane_child_attach_handlers(c, ch, true);
     }
 }
 
@@ -714,13 +914,44 @@ static void embed_style_msgbox_close_red(lv_obj_t *mbox) {
     if (xb == NULL) {
         return;
     }
+    lv_obj_set_style_bg_color(xb, ml_color_hex(ML_COLOR_SURFACE_ALT), 0);
+    lv_obj_set_style_bg_opa(xb, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(xb, LV_RADIUS_CIRCLE, 0);
     lv_obj_t *lb = lv_btn_find_label(xb);
     if (lb == NULL) {
         return;
     }
     lv_label_set_text_static(lb, MAT_SYMBOL_CLOSE);
     lv_obj_set_style_text_font(lb, lv_theme_moonlight_get_iconfont_normal(mbox), 0);
-    lv_obj_set_style_text_color(lb, lv_palette_main(LV_PALETTE_RED), 0);
+    lv_obj_set_style_text_color(lb, ml_color_hex(ML_COLOR_TEXT), 0);
+}
+
+static void settings_style_pane_msgbox_amoled(lv_obj_t *mbox) {
+    lv_obj_t *backdrop = lv_obj_get_parent(mbox);
+    if (backdrop != NULL) {
+        lv_obj_set_style_bg_color(backdrop, ml_color_hex(ML_COLOR_BG), 0);
+        lv_obj_set_style_bg_opa(backdrop, LV_OPA_70, 0);
+    }
+    lv_obj_set_style_bg_color(mbox, ml_color_hex(ML_COLOR_SURFACE), 0);
+    lv_obj_set_style_bg_opa(mbox, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(mbox, ml_color_hex(ML_COLOR_BORDER), 0);
+    lv_obj_set_style_border_width(mbox, LV_DPX(1), 0);
+    lv_obj_set_style_radius(mbox, LV_DPX(12), 0);
+    lv_obj_set_style_shadow_width(mbox, LV_DPX(20), 0);
+    lv_obj_set_style_shadow_color(mbox, ml_color_hex(ML_COLOR_BG), 0);
+    lv_obj_set_style_shadow_opa(mbox, LV_OPA_50, 0);
+    lv_obj_set_style_pad_all(mbox, lv_dpx(12), 0);
+
+    lv_obj_t *title = lv_msgbox_get_title(mbox);
+    if (title != NULL) {
+        lv_obj_set_style_text_color(title, ml_color_hex(ML_COLOR_TEXT), 0);
+    }
+    lv_obj_t *content = lv_msgbox_get_content(mbox);
+    if (content != NULL) {
+        lv_obj_set_style_bg_color(content, ml_color_hex(ML_COLOR_SURFACE), 0);
+        lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(content, 0, 0);
+    }
 }
 
 static void settings_show_pane_popup(settings_controller_t *c, const lv_fragment_class_t *cls) {
@@ -735,6 +966,8 @@ static void settings_show_pane_popup(settings_controller_t *c, const lv_fragment
     }
 
     lv_obj_t *mbox = lv_msgbox_create(NULL, title, NULL, NULL, true);
+    lv_obj_add_flag(mbox, LV_OBJ_FLAG_USER_4);
+    settings_style_pane_msgbox_amoled(mbox);
     embed_style_msgbox_close_red(mbox);
     lv_disp_t *disp = lv_obj_get_disp(mbox);
     const lv_coord_t hor = lv_disp_get_hor_res(disp);
@@ -742,6 +975,7 @@ static void settings_show_pane_popup(settings_controller_t *c, const lv_fragment
     lv_obj_set_size(mbox, hor * 92 / 100, ver * 92 / 100);
 
     lv_obj_t *content = lv_msgbox_get_content(mbox);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_set_width(content, LV_PCT(100));
     lv_obj_set_style_max_height(content, LV_PCT(90), 0);
     lv_obj_set_style_pad_all(content, lv_dpx(12), 0);
@@ -749,6 +983,8 @@ static void settings_show_pane_popup(settings_controller_t *c, const lv_fragment
     c->pane_mbox = mbox;
     c->pane_popup_group = lv_group_create();
     lv_group_set_wrap(c->pane_popup_group, true);
+
+    lv_obj_add_event_cb(content, pane_popup_child_added, LV_EVENT_CHILD_CREATED, c);
 
     lv_fragment_t *pane = lv_fragment_create(cls, c);
     lv_fragment_create_obj(pane, content);
@@ -763,6 +999,9 @@ static void settings_show_pane_popup(settings_controller_t *c, const lv_fragment
         lv_obj_add_flag(close_btn, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_add_event_cb(close_btn, on_detail_key, LV_EVENT_KEY, c);
     }
+
+    lv_obj_add_event_cb(mbox, embed_popup_cancel_cb, LV_EVENT_CANCEL, c);
+    lv_obj_add_event_cb(mbox, on_detail_key, LV_EVENT_KEY, c);
 
     app_input_push_modal_group(&c->app->ui.input, c->pane_popup_group);
     lv_obj_t *first = embed_popup_first_focusable(content);
@@ -792,7 +1031,7 @@ static void embed_fechar_btn_cb(lv_event_t *e) {
 
 static void embed_backdrop_cb(lv_event_t *e) {
     settings_controller_t *c = lv_event_get_user_data(e);
-    settings_close_pane_popup(c);
+    settings_request_close_pane_popup(c);
 }
 
 static void embed_appbar_key(lv_event_t *e) {
@@ -845,7 +1084,7 @@ lv_obj_t *settings_launcher_embedded_create(lv_fragment_t *self, lv_obj_t *paren
     lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(root, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_bg_color(root, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(root, ml_color_hex(ML_COLOR_BG), 0);
     lv_obj_set_style_bg_opa(root, LV_OPA_70, 0);
 
     lv_obj_t *bar = lv_obj_create(root);
@@ -860,7 +1099,10 @@ lv_obj_t *settings_launcher_embedded_create(lv_fragment_t *self, lv_obj_t *paren
     lv_obj_set_style_pad_hor(bar, LV_DPX(8), 0);
     lv_obj_set_style_pad_gap(bar, LV_DPX(4), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(bar, lv_color_darken(lv_color_hex(0x2f3237), 4), 0);
+    lv_obj_set_style_bg_color(bar, ml_color_hex(ML_COLOR_BG), 0);
+    lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(bar, LV_DPX(1), 0);
+    lv_obj_set_style_border_color(bar, ml_color_hex(ML_COLOR_BORDER), 0);
     lv_obj_set_scroll_dir(bar, LV_DIR_HOR);
     lv_obj_set_style_pad_ver(bar, LV_DPX(4), 0);
 
@@ -874,7 +1116,7 @@ lv_obj_t *settings_launcher_embedded_create(lv_fragment_t *self, lv_obj_t *paren
         lv_obj_t *lab = lv_label_create(btn);
         lv_label_set_text_static(lab, entries[i].icon);
         lv_obj_set_style_text_font(lab, lv_theme_moonlight_get_iconfont_small(bar), 0);
-        lv_obj_set_style_text_color(lab, lv_color_white(), 0);
+        lv_obj_set_style_text_color(lab, ml_color_hex(ML_COLOR_TEXT), 0);
         lv_obj_center(lab);
         lv_obj_clear_flag(lab, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_user_data(btn, (void *) entries[i].cls);

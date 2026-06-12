@@ -41,6 +41,12 @@ include(GetCompilerTarget)
 
 get_filename_component(CC_BASENAME ${CMAKE_C_COMPILER} NAME)
 
+# Docker / easy_build: toolchain path is set before the compiler basename is visible.
+if (NOT TARGET_WEBOS AND CMAKE_TOOLCHAIN_FILE MATCHES "webos|buildroot")
+    set(TARGET_WEBOS ON)
+    set(TARGET_WEBOS_ARCH "arm")
+endif ()
+
 if (CMAKE_C_COMPILER_TARGET STREQUAL "arm-webos-linux-gnueabi")
     set(TARGET_WEBOS ON)
     set(TARGET_WEBOS_ARCH "arm")
@@ -94,7 +100,9 @@ set(FEATURE_WINDOW_FULLSCREEN_DESKTOP ON)
 include(LintOptions)
 
 if (TARGET_WEBOS)
+    # Cross-build: FindThreads try_compile spawns a sub-CMake without the toolchain compiler.
     set(THREADS_PTHREAD_ARG "2" CACHE STRING "Result from TRY_RUN" FORCE)
+    set(CMAKE_THREAD_LIBS_INIT "-lpthread" CACHE INTERNAL "webOS pthread")
     set(OS_LINUX TRUE)
 
     set(WEBOS_APPINFO_ID "com.aurora.gamestream")
@@ -128,6 +136,9 @@ endif ()
 
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+if (CMAKE_CROSSCOMPILING AND NOT DEFINED THREADS_PTHREAD_ARG)
+    set(THREADS_PTHREAD_ARG "2" CACHE STRING "Cross-compile: skip pthread try_compile" FORCE)
+endif ()
 find_package(Threads REQUIRED)
 
 find_package(PkgConfig REQUIRED)

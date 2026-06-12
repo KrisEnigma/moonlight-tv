@@ -186,8 +186,9 @@ static lv_obj_t *apps_view(lv_fragment_t *self, lv_obj_t *container) {
     lv_obj_add_flag(applist, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_set_scroll_dir(applist, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(applist, LV_SCROLLBAR_MODE_ACTIVE);
-    lv_obj_set_style_pad_all(applist, lv_dpx(24), 0);
-    lv_obj_set_style_pad_gap(applist, lv_dpx(24), 0);
+    lv_obj_set_style_pad_hor(applist, lv_dpx(32), 0);
+    lv_obj_set_style_pad_ver(applist, lv_dpx(28), 0);
+    lv_obj_set_style_pad_gap(applist, lv_dpx(20), 0);
     lv_obj_set_style_radius(applist, 0, 0);
     lv_obj_set_style_border_side(applist, LV_BORDER_SIDE_NONE, 0);
     lv_obj_set_style_bg_opa(applist, 0, 0);
@@ -276,13 +277,14 @@ static void update_grid_config(apps_fragment_t *controller) {
     lv_obj_t *applist = controller->applist;
     lv_obj_update_layout(applist);
     lv_coord_t applist_width = lv_obj_get_width(applist);
-    int col_count = LV_CLAMP(2, applist_width / lv_dpx(120), 5);
+    int col_count = LV_CLAMP(4, applist_width / lv_dpx(150), 8);
     lv_coord_t col_width = (applist_width - lv_obj_get_style_pad_left(applist, 0) -
                             lv_obj_get_style_pad_right(applist, 0) -
                             lv_obj_get_style_pad_column(applist, 0) * (col_count - 1)) / col_count;
     controller->col_count = col_count;
     controller->col_width = col_width;
-    lv_coord_t row_height = col_width / 3 * 4;
+    /* Vertical box art (Moonlight / GeForce NOW covers are ~130×180, ratio 3:4). */
+    lv_coord_t row_height = (col_width * 4) / 3;
     controller->col_height = row_height;
     lv_gridview_set_config(applist, col_count, row_height, LV_GRID_ALIGN_CENTER, LV_GRID_ALIGN_CENTER);
 
