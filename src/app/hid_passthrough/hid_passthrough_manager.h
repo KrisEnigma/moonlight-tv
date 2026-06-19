@@ -6,31 +6,13 @@
 
 #if defined(TARGET_WEBOS)
 
-#define HID_PT_MAX_SLOTS 4
+#define HID_PT_PATH_LEN 64
 #define HID_PT_DEFAULT_PORT 48054
-#define HID_PT_SCAN_INTERVAL_MS 2000
-#define HID_PT_RECONNECT_MS 2000
-
-#include "hid_device.h"
-#include <pthread.h>
-#include <stdint.h>
-
-typedef struct {
-    bool in_use;
-    bool plugged;
-    hid_device_t device;
-} hid_pt_slot_t;
 
 struct hid_passthrough_manager {
-    pthread_t thread;
-    pthread_mutex_t mutex;
     bool running;
-    bool thread_started;
     char host[128];
     int port;
-    hid_pt_slot_t slots[HID_PT_MAX_SLOTS];
-    uint64_t last_scan_us;
-    int enet_global;
 };
 
 typedef struct hid_passthrough_manager hid_passthrough_manager_t;
@@ -73,6 +55,17 @@ typedef struct hid_passthrough_manager {
     int unused;
 } hid_passthrough_manager_t;
 
+typedef struct {
+    char path[64];
+    char product[64];
+    uint16_t vendor_id;
+    uint16_t product_id;
+    uint16_t usage_page;
+    uint16_t usage;
+    bool plugged;
+    bool connected;
+} hid_pt_device_info_t;
+
 static inline void hid_passthrough_manager_init(hid_passthrough_manager_t *manager) {
     (void) manager;
 }
@@ -85,7 +78,7 @@ static inline int hid_passthrough_manager_start(hid_passthrough_manager_t *manag
     (void) manager;
     (void) host;
     (void) port;
-    return 0;
+    return -1;
 }
 
 static inline void hid_passthrough_manager_stop(hid_passthrough_manager_t *manager) {

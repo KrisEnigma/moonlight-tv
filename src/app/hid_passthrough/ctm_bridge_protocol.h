@@ -19,7 +19,7 @@ enum ctmb_message_type {
     CTMB_MSG_LOG = 7,
     CTMB_MSG_ERROR = 8,
     CTMB_MSG_FEATURE_SET = 9,
-    CTMB_MSG_ENUM = 10
+    CTMB_MSG_ENUM = 10           /* forwarded composite USB enumeration (puck) */
 };
 
 #pragma pack(push, 1)
@@ -64,16 +64,24 @@ typedef struct {
     uint8_t reserved[31];
 } ctmb_host_config_t;
 
+/* CTMB_MSG_ENUM payload (puck composite): the device's OWN enumeration, read
+ * from sysfs on the TV and forwarded verbatim. Windows replays it (no parsing
+ * on the TV). Layout:
+ *   [ctmb_enum_info_t]
+ *   [descriptors blob: descriptors_len bytes]   (device + config + ifaces + eps)
+ *   iface_count x ( [ctmb_enum_iface_t] [report_desc: report_desc_len bytes] )
+ * full_speed=1 tells the host to present the virtual device as full-speed so the
+ * 64-byte CDC bulk endpoints are legal (the device really is full-speed). */
 typedef struct {
     uint16_t descriptors_len;
-    uint8_t iface_count;
-    uint8_t full_speed;
-    uint8_t reserved[28];
+    uint8_t  iface_count;
+    uint8_t  full_speed;
+    uint8_t  reserved[28];
 } ctmb_enum_info_t;
 
 typedef struct {
-    uint8_t interface_number;
-    uint8_t iface_class;
+    uint8_t  interface_number;
+    uint8_t  iface_class;
     uint16_t report_desc_len;
 } ctmb_enum_iface_t;
 #pragma pack(pop)

@@ -106,6 +106,8 @@ struct hid_passthrough_manager;
 typedef struct hid_passthrough_manager hid_passthrough_manager_t;
 
 hid_passthrough_manager_t *session_get_hid_passthrough(session_t *session);
+
+void session_ensure_hid_passthrough(session_t *session);
 #endif
 
 void streaming_display_size(session_t *session, short width, short height);

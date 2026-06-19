@@ -4,6 +4,7 @@
 #include "logging.h"
 
 #include <errno.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <stdio.h>
@@ -34,6 +35,42 @@ struct hidraw_devinfo {
 #endif
 
 #define LG_VENDOR_ID 0x005du
+
+static bool hid_str_contains_ci(const char *haystack, const char *needle) {
+    if (!haystack || !needle || !needle[0]) {
+        return false;
+    }
+    size_t needle_len = strlen(needle);
+    for (const char *cur = haystack; *cur != '\0'; cur++) {
+        size_t i = 0;
+        while (i < needle_len && cur[i] != '\0' &&
+               tolower((unsigned char) cur[i]) == tolower((unsigned char) needle[i])) {
+            i++;
+        }
+        if (i == needle_len) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool hid_name_suggests_gamepad(const char *name) {
+    if (!name || !name[0]) {
+        return false;
+    }
+    if (hid_str_contains_ci(name, "remote") || hid_str_contains_ci(name, "keyboard") ||
+        hid_str_contains_ci(name, "mouse") || hid_str_contains_ci(name, "touch") ||
+        hid_str_contains_ci(name, "webos") || hid_str_contains_ci(name, "lge")) {
+        return false;
+    }
+    return hid_str_contains_ci(name, "controller") || hid_str_contains_ci(name, "gamepad") ||
+           hid_str_contains_ci(name, "xbox") || hid_str_contains_ci(name, "dualshock") ||
+           hid_str_contains_ci(name, "dualsense") || hid_str_contains_ci(name, "playstation") ||
+           hid_str_contains_ci(name, "wireless controller") || hid_str_contains_ci(name, "8bitdo") ||
+           hid_str_contains_ci(name, "flydigi") || hid_str_contains_ci(name, "gamesir") ||
+           hid_str_contains_ci(name, "gulikit") || hid_str_contains_ci(name, "pro controller") ||
+           hid_str_contains_ci(name, "joystick");
+}
 
 static void hid_device_release_grabs(hid_device_t *dev) {
     for (int i = 0; i < dev->grab_count; i++) {
@@ -101,6 +138,14 @@ bool hid_device_is_gamepad_candidate(uint16_t vendor_id, uint16_t usage_page, ui
             case 0x20d6: /* PowerA */
             case 0x24c6: /* PowerA / licensed */
             case 0x2563: /* 8BitDo alt */
+            case 0x28de: /* Valve */
+            case 0x0079: /* DragonRise / generic */
+            case 0x0810: /* Personal Communication Systems */
+            case 0x1038: /* SteelSeries */
+            case 0x146b: /* BigBen */
+            case 0x1949: /* Lab126 / Amazon */
+            case 0x1bad: /* Harmonix / Mad Catz */
+            case 0x2378: /* GreenAsia */
                 return true;
             default:
                 break;
@@ -169,7 +214,8 @@ int hid_device_open(hid_device_t *dev, const char *path) {
         ctm_hid_top_usage(dev->report_desc, dev->report_desc_len, &dev->usage_page, &dev->usage, NULL);
     }
 
-    if (!hid_device_is_gamepad_candidate(dev->vendor_id, dev->usage_page, dev->usage)) {
+    if (!hid_device_is_gamepad_candidate(dev->vendor_id, dev->usage_page, dev->usage) &&
+        !hid_name_suggests_gamepad(dev->caps.product)) {
         commons_log_info("HidPassthrough", "Skipping %s (%04x:%04x %s) — not a gamepad interface",
                          path, dev->vendor_id, dev->product_id,
                          ctm_hid_usage_label(dev->usage_page, dev->usage));

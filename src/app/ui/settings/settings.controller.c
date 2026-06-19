@@ -106,8 +106,6 @@ static void on_textarea_focused(lv_event_t *e);
 
 static void on_textarea_defocused(lv_event_t *e);
 
-static void on_dropdown_focused(lv_event_t *e);
-
 static void embed_popup_cancel_cb(lv_event_t *e);
 
 static void settings_dropdown_cancel_cb(lv_event_t *e);
@@ -749,7 +747,6 @@ static void pane_child_attach_handlers(settings_controller_t *controller, lv_obj
     if (lv_obj_has_class(child, &lv_dropdown_class)) {
         lv_obj_add_event_cb(child, on_dropdown_clicked, LV_EVENT_CLICKED, controller);
         lv_obj_add_event_cb(child, on_dropdown_clicked, LV_EVENT_VALUE_CHANGED, controller);
-        lv_obj_add_event_cb(child, on_dropdown_focused, LV_EVENT_FOCUSED, controller);
         if (popup) {
             lv_obj_add_event_cb(child, settings_dropdown_cancel_cb, LV_EVENT_CANCEL, controller);
         }
@@ -782,14 +779,6 @@ static void on_textarea_focused(lv_event_t *e) {
 static void on_textarea_defocused(lv_event_t *e) {
     settings_controller_t *controller = lv_event_get_user_data(e);
     lv_group_t *group = controller->pane_popup_group ? controller->pane_popup_group : controller->detail_group;
-    if (group) {
-        lv_group_set_editing(group, false);
-    }
-}
-
-static void on_dropdown_focused(lv_event_t *e) {
-    settings_controller_t *controller = lv_event_get_user_data(e);
-    lv_group_t *group = settings_nav_group_for(controller);
     if (group) {
         lv_group_set_editing(group, false);
     }

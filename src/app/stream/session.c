@@ -182,6 +182,17 @@ hid_passthrough_manager_t *session_get_hid_passthrough(session_t *session) {
 }
 #endif
 
+void session_ensure_hid_passthrough(session_t *session) {
+    if (!session || !session->config.hid_passthrough || !session->server) {
+        return;
+    }
+    if (hid_passthrough_manager_active(&session->hid_pt)) {
+        return;
+    }
+    hid_passthrough_manager_start(&session->hid_pt, session->server->serverInfo.address,
+                                  session->config.hid_passthrough_port);
+}
+
 void session_toggle_vmouse(session_t *session) {
     bool value = session->config.vmouse && !session_input_is_vmouse_active(&session->input.vmouse);
     session_input_set_vmouse_active(&session->input.vmouse, value);
