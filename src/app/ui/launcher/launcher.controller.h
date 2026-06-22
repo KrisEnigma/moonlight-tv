@@ -50,6 +50,9 @@ typedef struct launcher_fragment_t {
     const app_launch_params_t *launch_params;
     bool def_host_selected;
     bool def_app_requested;
+    bool auto_resume_done;        // once-guard: only auto-resume once per app start
+    int  pending_def_app;         // def_app id injected into the next select_pc()
+    uuidstr_t auto_resume_uuid;   // host scheduled for deferred auto-resume
 
     /* Full-screen overlay over the game area (below the top bar). Hosts embedded Settings. */
     lv_obj_t *settings_layer;

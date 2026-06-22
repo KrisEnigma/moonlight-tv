@@ -41,6 +41,7 @@ typedef struct app_settings_t {
     int rotate;
     bool unsupported;
     bool quitappafter;
+    bool autoresume;
     bool viewonly;
     bool absmouse;
     bool hardware_mouse;
