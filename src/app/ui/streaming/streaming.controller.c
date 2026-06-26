@@ -105,20 +105,6 @@ static const char *streaming_codec_compact_text(const char *fmt) {
     return fmt;
 }
 
-/** Format target stream FPS for compact stats (e.g. "120" or "119.88"). */
-static void streaming_target_fps_text(char *buf, size_t buflen) {
-    if (app_configuration->client_refresh_rate_x100 > 0) {
-        int x100 = app_configuration->client_refresh_rate_x100;
-        if (x100 % 100 == 0) {
-            snprintf(buf, buflen, "%d", x100 / 100);
-        } else {
-            snprintf(buf, buflen, "%.2f", x100 / 100.0);
-        }
-    } else {
-        snprintf(buf, buflen, "%d", app_configuration->stream.fps);
-    }
-}
-
 static float streaming_render_fps(float decodedFps) {
     float renderFps = decodedFps;
 #if defined(TARGET_WEBOS)
@@ -239,8 +225,6 @@ bool streaming_refresh_stats() {
 
     if (controller->stats_compact_label != NULL) {
         char stats_line[384];
-        char fps_text[16];
-        streaming_target_fps_text(fps_text, sizeof(fps_text));
 
         const char *codec = streaming_codec_compact_text(vdec_stream_info.format);
         const char *hdr_suffix = app_configuration->hdr ? " HDR" : "";
@@ -273,9 +257,9 @@ bool streaming_refresh_stats() {
         float totalMs = (float) dst->rtt + hostMs + submitMs + decOnlyMs;
 
         int len = snprintf(stats_line, sizeof(stats_line),
-                           "%dx%d@%s %s%s FPS %.1f Rx \xb7 %.1f De \xb7 %.1f Rd "
+                           "%dx%d %s%s FPS %.1f Rx \xb7 %.1f De \xb7 %.1f Rd "
                            "N %u \xb1 %ums FD %.2f%% BW %.2f Mbps",
-                           w, h, fps_text, codec, hdr_suffix,
+                           w, h, codec, hdr_suffix,
                            dst->receivedFps, dst->decodedFps, renderFps,
                            (unsigned) dst->rtt, (unsigned) dst->rttVariance,
                            lossPct, bitrateMbps);
