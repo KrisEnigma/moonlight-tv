@@ -69,6 +69,7 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     // TODO make this automatic
     config->unsupported = true;
     config->quitappafter = false;
+    config->autoresume = false;
     config->viewonly = false;
     config->rotate = 0;
     config->absmouse = true;
@@ -124,6 +125,7 @@ bool settings_save(app_settings_t *config) {
     ini_write_bool(fp, "sops", config->sops);
     ini_write_bool(fp, "localaudio", config->localaudio);
     ini_write_bool(fp, "quitappafter", config->quitappafter);
+    ini_write_bool(fp, "autoresume", config->autoresume);
     ini_write_bool(fp, "viewonly", config->viewonly);
 
     ini_write_section(fp, "input");
@@ -275,6 +277,8 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         config->localaudio = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("quitappafter")) {
         config->quitappafter = INI_IS_TRUE(value);
+    } else if (INI_NAME_MATCH("autoresume")) {
+        config->autoresume = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("viewonly")) {
         config->viewonly = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("absmouse")) {

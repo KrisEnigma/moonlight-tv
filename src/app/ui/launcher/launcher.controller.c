@@ -57,6 +57,8 @@ static void open_help(lv_event_t *event);
 
 static void select_pc(launcher_fragment_t *controller, const uuidstr_t *uuid);
 
+static void launcher_try_auto_resume(launcher_fragment_t *controller, const uuidstr_t *uuid);
+
 /* Switch the active focus group between top-bar and detail (game rail).
  * Replaces the old "set_detail_opened" semantics now that both areas are visible
  * simultaneously - we just route input to whichever group the user is in. */
@@ -247,10 +249,10 @@ void on_pc_added(const uuidstr_t *uuid, void *userdata) {
 }
 
 void on_pc_updated(const uuidstr_t *uuid, void *userdata) {
-    LV_UNUSED(uuid);
     launcher_fragment_t *controller = userdata;
     /* Hostname can change after a successful query; keep the top-bar label in sync. */
     launcher_refresh_server_label(controller);
+    launcher_try_auto_resume(controller, uuid);
 }
 
 void on_pc_removed(const uuidstr_t *uuid, void *userdata) {
@@ -272,12 +274,50 @@ static void select_pc(launcher_fragment_t *controller, const uuidstr_t *uuid) {
             controller->def_app_requested = true;
             arg.def_app = params->default_app_id;
         }
+        if (controller->pending_def_app != 0) {
+            arg.def_app = controller->pending_def_app;
+            controller->pending_def_app = 0;
+        }
         lv_fragment_t *fragment = lv_fragment_create(&apps_controller_class, &arg);
         lv_fragment_manager_replace(controller->base.child_manager, fragment, &controller->detail);
         pcmanager_select(pcmanager, uuid);
     } else {
         lv_fragment_manager_pop(controller->base.child_manager);
     }
+}
+
+static void launcher_auto_resume_async(void *userdata) {
+    launcher_fragment_t *controller = userdata;
+    // The launcher may have been destroyed between scheduling and firing.
+    if (current_instance != controller) { return; }
+    const uuidstr_t *uuid = &controller->auto_resume_uuid;
+    const pclist_t *node = pcmanager_node(pcmanager, uuid);
+    if (node == NULL || node->state.code != SERVER_STATE_AVAILABLE) { return; }
+    int current = pcmanager_node_current_app(node);
+    if (current == 0) { return; }
+    commons_log_info("UI", "Auto-resuming running app %d on host %s", current, node->server->hostname);
+    // Inject the running app as def_app; apps.controller's def_app auto-launch
+    // path resumes it (gs_start_app resumes when appId == currentGame).
+    controller->pending_def_app = current;
+    select_pc(controller, uuid);
+}
+
+static void launcher_try_auto_resume(launcher_fragment_t *controller, const uuidstr_t *uuid) {
+    if (!app_configuration->autoresume) { return; }
+    // Only fire once per app start; let an explicit CLI/deep-link launch take priority.
+    if (controller->auto_resume_done || controller->def_app_requested) { return; }
+    const pclist_t *node = pcmanager_node(pcmanager, uuid);
+    if (node == NULL || node->state.code != SERVER_STATE_AVAILABLE) { return; }
+    if (pcmanager_node_current_app(node) == 0) { return; }
+    // Set the guard immediately so repeated host updates (incl. the refresh after a
+    // stream ends, when currentGame is still set) can neither re-trigger nor
+    // double-schedule the resume.
+    controller->auto_resume_done = true;
+    controller->auto_resume_uuid = *uuid;
+    // Defer the actual host select: select_pc() replaces the apps fragment, whose
+    // teardown unregisters a pcmanager listener — unsafe while iterating listeners
+    // inside the notify() that called us.
+    lv_async_call(launcher_auto_resume_async, controller);
 }
 
 static void cb_detail_focused(lv_event_t *event) {
