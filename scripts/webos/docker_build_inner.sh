@@ -15,7 +15,6 @@ cd /build
 find .git/modules -name "*.lock" -delete 2>/dev/null || true
 git submodule sync --recursive
 git submodule update --init --recursive
-rm -rf build/webos-easy_build
 
 # Download SDK
 cd /tmp
@@ -37,4 +36,7 @@ if [ ! -x "${SDK_ROOT}/bin/arm-webos-linux-gnueabi-gcc" ]; then
   echo "Error: webOS compiler not found: ${SDK_ROOT}/bin/arm-webos-linux-gnueabi-gcc"
   exit 1
 fi
+# Build outside the Windows bind mount: cmake try_compile breaks on NTFS/exFAT volumes.
+export CMAKE_BINARY_DIR=/tmp/aurora-webos-build
+rm -rf "${CMAKE_BINARY_DIR}"
 CI=1 ./scripts/webos/easy_build.sh -DCMAKE_BUILD_TYPE=Release

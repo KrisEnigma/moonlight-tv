@@ -16,9 +16,9 @@ else ()
         set(MOONLIGHT_VERSION "0.0.0")
     endif ()
 endif ()
-set(MOONLIGHT_VERSION "1.0.7")
+set(MOONLIGHT_VERSION "1.0.8")
 
-project(moonlight VERSION ${MOONLIGHT_VERSION} LANGUAGES C)
+project(moonlight VERSION ${MOONLIGHT_VERSION} LANGUAGES C CXX)
 
 # To suppress warnings for MbedTLS
 if (POLICY CMP0048)
