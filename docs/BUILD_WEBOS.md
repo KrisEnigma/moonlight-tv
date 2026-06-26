@@ -204,6 +204,10 @@ The buildroot-nc4 SDK includes pbnjson_c, PmLogLib, webosi18n, etc. If something
 - Developer mode enabled on the TV
 - Firewall not blocking the ares-cli port
 
+### HEVC artifact drift (long sessions)
+
+If blockiness or color smearing builds up over time with **H.265** streams, try **Settings → Video → Periodic decoder refresh (HEVC)** (interval 10–30 s). This only applies when HEVC is active; it has no effect on H.264-only streams.
+
 ---
 
 ## 5. HID Passthrough (Experimental)
@@ -229,16 +233,17 @@ When HID Passthrough is enabled, Aurora does **not** send Moonlight gamepad even
 
 ### Supported controllers
 
-CTM-USBIP maps most devices automatically:
+| Controller | TV bridge | Host map | Notes |
+|------------|-----------|----------|-------|
+| DualSense / DS4 | `ds5` / `ds4` | Dedicated `.map` files | BT reports translated on the host |
+| Xbox (GIP) | `xbox` | `xbox_gip_*.map` | |
+| Steam Controller Puck | `puck` | `steam_puck_identity.map` | Composite + `CTMB_MSG_ENUM` |
+| Flydigi Apex 4 | `flydigi` | `flydigi_apex4_identity.map` | Enable **Recognize as native Flydigi on PC** in the HID panel |
+| Gamesir / generic | `hid` | `hid_identity.map` | Single-interface passthrough |
 
-| Controller | Host map | Notes |
-|------------|----------|-------|
-| DualSense / DS4 | Dedicated `.map` files | BT reports translated on the host |
-| Xbox (GIP) | `xbox_gip_*.map` | |
-| Flydigi Apex 4 (`04b4:2412`) | `hid_identity.map` | Composite device; Aurora picks the gamepad HID interface |
-| Gamesir G7 Pro / others | `hid_identity.map` | Generic byte-for-byte passthrough |
+Build the Windows agent from the vendored submodule: see **[CTM_USBIP.md](CTM_USBIP.md)**.
 
-No Aurora-side tweaks are needed per brand — if a device fails on the host, add a `.map` in CTM-USBIP, not in Aurora.
+For other devices that fail on the host, add a `.map` in [CTM-USBIP](https://github.com/CTM-Bridge/CTM-USBIP).
 
 ### Developer mode / hidraw access
 

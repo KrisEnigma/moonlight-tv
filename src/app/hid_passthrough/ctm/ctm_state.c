@@ -14,6 +14,8 @@
 #include <unistd.h>
 
 /* ---- headless global state (was defined in ui_common.c) ----------------- */
+composite_enum_t g_composite_enums[COMPOSITE_ENUM_MAX_CACHE];
+int g_composite_enum_count;
 puck_enum_t g_puck_enum;
 scan_result_t g_scan;
 logical_result_t g_devices;
@@ -41,6 +43,8 @@ char g_log[LOG_LEN];
 size_t g_log_used;
 pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 bool g_log_dirty;
+static char g_last_plug_error[160];
+static pthread_mutex_t g_plug_error_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Append a timestamped line to the in-memory log buffer + stderr. Thread-safe
  * (buffer guarded by g_log_mutex, touches NO LVGL) so controller threads can
@@ -87,6 +91,32 @@ void log_append(const char *fmt, ...)
 
     fputs(line, stderr);
     fflush(stderr);
+}
+
+void ctm_set_plug_error(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    pthread_mutex_lock(&g_plug_error_mutex);
+    vsnprintf(g_last_plug_error, sizeof(g_last_plug_error), fmt, ap);
+    pthread_mutex_unlock(&g_plug_error_mutex);
+    va_end(ap);
+    log_append("%s", g_last_plug_error);
+}
+
+void ctm_clear_plug_error(void)
+{
+    pthread_mutex_lock(&g_plug_error_mutex);
+    g_last_plug_error[0] = '\0';
+    pthread_mutex_unlock(&g_plug_error_mutex);
+}
+
+const char *ctm_last_plug_error(void)
+{
+    pthread_mutex_lock(&g_plug_error_mutex);
+    const char *msg = g_last_plug_error[0] ? g_last_plug_error : NULL;
+    pthread_mutex_unlock(&g_plug_error_mutex);
+    return msg;
 }
 
 int count_dir_entries(const char *path)

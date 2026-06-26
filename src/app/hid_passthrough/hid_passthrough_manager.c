@@ -153,9 +153,12 @@ void hid_passthrough_manager_rescan(hid_passthrough_manager_t *manager) {
     publish_bt_macs();
 
     for (int i = 0; i < g_devices.count; ++i) {
-        if (strcmp(bridge_kind_for_item(&g_devices.items[i]), "puck") == 0) {
-            puck_enum_capture(g_devices.items[i].vid, g_devices.items[i].pid);
-            break;
+        const logical_device_t *item = &g_devices.items[i];
+        const char *kind = bridge_kind_for_item(item);
+        if (strcmp(kind, "puck") == 0) {
+            puck_enum_capture(item->vid, item->pid);
+        } else if (strcmp(kind, "flydigi") == 0) {
+            composite_enum_capture(item->usb_busid, item->vid, item->pid);
         }
     }
 

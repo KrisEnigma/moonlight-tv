@@ -35,6 +35,7 @@ typedef struct {
     unsigned int ds5_patch_low_nibble;
     unsigned int ds5_patch2_high_nibble;
     unsigned int ds5_patch2_low_nibble;
+    bool composite_passthrough;   /* Flydigi: forward full USB composite to host */
 } tv_bridge_worker_settings_t;
 
 #endif /* CTM_SETTINGS_H */

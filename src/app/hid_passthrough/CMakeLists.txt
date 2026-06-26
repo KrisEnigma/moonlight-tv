@@ -12,6 +12,7 @@ if (TARGET_WEBOS)
             ctm/controllers/controller_ds5.c
             ctm/controllers/controller_generic.c
             ctm/controllers/controller_steam_puck.c
+            ctm/controllers/controller_flydigi.c
             ctm/controllers/controller_xbox.c
             ctm/monitor/ctm_monitor.c)
     target_include_directories(moonlight-lib PRIVATE

@@ -5,7 +5,8 @@
 #define _GNU_SOURCE
 
 #include "ctm_state.h"
-#include "ctm_hid.h"   /* read_report_descriptor + interface classification */
+#include "ctm_hid.h"
+#include "ctm_bridge_protocol.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -16,6 +17,19 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+/* Xbox 360 wired-style HID report descriptor (matches flydigi_apex4_usb.profile). */
+const uint8_t flydigi_xbox360_wired_rdesc[] = {
+    0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x09, 0x01, 0xA1, 0x00, 0x09, 0x30, 0x09, 0x31,
+    0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x02, 0x81, 0x02, 0x09, 0x32, 0x09, 0x35,
+    0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x02, 0x81, 0x02, 0x05, 0x09, 0x19, 0x01,
+    0x29, 0x0A, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x0A, 0x81, 0x02, 0x05, 0x01, 0x09,
+    0x39, 0x15, 0x00, 0x25, 0x07, 0x35, 0x00, 0x46, 0x3B, 0x01, 0x65, 0x14, 0x75, 0x04, 0x95,
+    0x01, 0x81, 0x42, 0x75, 0x08, 0x95, 0x02, 0x06, 0x00, 0xFF, 0x09, 0x5B, 0x81, 0x02, 0xC0,
+    0xC0
+};
+const unsigned flydigi_xbox360_wired_rdesc_len = sizeof(flydigi_xbox360_wired_rdesc);
+
 device_info_t *find_or_add_device(scan_result_t *result, const char *hidraw)
 {
     for (int i = 0; i < result->count; ++i) {
@@ -173,9 +187,323 @@ const char *bus_label(const char *bus)
     return bus[0] ? bus : "-";
 }
 
+#define USB_IDENTITY_CACHE_MAX 16
+
+typedef struct {
+    char usb_busid[64];
+    char manufacturer[TEXT_LEN];
+    char product[TEXT_LEN];
+    int valid;
+} usb_identity_cache_t;
+
+static usb_identity_cache_t g_usb_identity_cache[USB_IDENTITY_CACHE_MAX];
+
+static bool flydigi_identity_text(const char *mfg, const char *prod)
+{
+    if (mfg && contains_ci(mfg, "flydigi")) return true;
+    if (prod && (contains_ci(prod, "flydigi") || contains_ci(prod, "apex") ||
+                 contains_ci(prod, "vader"))) {
+        return true;
+    }
+    return false;
+}
+
+static usb_identity_cache_t *usb_identity_slot(const char *usb_busid)
+{
+    if (!usb_busid || !usb_busid[0]) return NULL;
+    for (int i = 0; i < USB_IDENTITY_CACHE_MAX; ++i) {
+        if (g_usb_identity_cache[i].valid &&
+            strcmp(g_usb_identity_cache[i].usb_busid, usb_busid) == 0) {
+            return &g_usb_identity_cache[i];
+        }
+    }
+    for (int i = 0; i < USB_IDENTITY_CACHE_MAX; ++i) {
+        if (!g_usb_identity_cache[i].valid) {
+            usb_identity_cache_t *slot = &g_usb_identity_cache[i];
+            snprintf(slot->usb_busid, sizeof(slot->usb_busid), "%s", usb_busid);
+            slot->valid = 1;
+            return slot;
+        }
+    }
+    return NULL;
+}
+
+int read_usb_identity_attrs(const char *usb_busid, char *mfg, size_t mfg_len,
+                            char *prod, size_t prod_len)
+{
+    if (mfg && mfg_len) mfg[0] = '\0';
+    if (prod && prod_len) prod[0] = '\0';
+    if (!usb_busid || !usb_busid[0]) return -1;
+
+    usb_identity_cache_t *cached = usb_identity_slot(usb_busid);
+    if (cached && cached->manufacturer[0]) {
+        if (mfg && mfg_len) snprintf(mfg, mfg_len, "%s", cached->manufacturer);
+        if (prod && prod_len) snprintf(prod, prod_len, "%s", cached->product);
+        return 0;
+    }
+
+    char usbdir[256];
+    if (composite_usb_device_dir_by_busid(usb_busid, usbdir, sizeof(usbdir)) != 0) {
+        return -1;
+    }
+
+    char manufacturer[TEXT_LEN] = {0};
+    char product[TEXT_LEN] = {0};
+    char path[320];
+    snprintf(path, sizeof(path), "%s/manufacturer", usbdir);
+    read_text_file(path, manufacturer, sizeof(manufacturer));
+    snprintf(path, sizeof(path), "%s/product", usbdir);
+    read_text_file(path, product, sizeof(product));
+
+    if (cached) {
+        snprintf(cached->manufacturer, sizeof(cached->manufacturer), "%s", manufacturer);
+        snprintf(cached->product, sizeof(cached->product), "%s", product);
+    }
+    if (mfg && mfg_len) snprintf(mfg, mfg_len, "%s", manufacturer);
+    if (prod && prod_len) snprintf(prod, prod_len, "%s", product);
+    return 0;
+}
+
+bool is_flydigi_usb_busid(const char *usb_busid)
+{
+    if (!usb_busid || !usb_busid[0]) return false;
+    char mfg[TEXT_LEN] = {0};
+    char prod[TEXT_LEN] = {0};
+    if (read_usb_identity_attrs(usb_busid, mfg, sizeof(mfg), prod, sizeof(prod)) != 0) {
+        return false;
+    }
+    return flydigi_identity_text(mfg, prod);
+}
+
+static void usb_busid_from_sysfs_realpath(const char *real, char *out, size_t out_len)
+{
+    out[0] = '\0';
+    if (!real || !real[0]) return;
+    char copy[PATH_MAX];
+    snprintf(copy, sizeof(copy), "%s", real);
+    char *save = NULL;
+    for (char *part = strtok_r(copy, "/", &save); part; part = strtok_r(NULL, "/", &save)) {
+        if (!strchr(part, '-')) continue;
+        if (strchr(part, ':')) {
+            char tmp[64];
+            snprintf(tmp, sizeof(tmp), "%s", part);
+            char *colon = strchr(tmp, ':');
+            if (colon) *colon = '\0';
+            snprintf(out, out_len, "%s", tmp);
+            return;
+        }
+        if (part[0] >= '0' && part[0] <= '9') {
+            snprintf(out, out_len, "%s", part);
+        }
+    }
+}
+
+static void usb_busid_from_sysfs_path(const char *path, char *out, size_t out_len)
+{
+    out[0] = '\0';
+    if (!path || !path[0]) return;
+    char real[PATH_MAX];
+    if (realpath(path, real)) {
+        usb_busid_from_sysfs_realpath(real, out, out_len);
+        if (out[0]) return;
+    }
+    char linkbuf[PATH_MAX];
+    ssize_t n = readlink(path, linkbuf, sizeof(linkbuf) - 1);
+    if (n > 0) {
+        linkbuf[n] = '\0';
+        if (linkbuf[0] != '/') {
+            char base[PATH_MAX];
+            snprintf(base, sizeof(base), "%s", path);
+            char *slash = strrchr(base, '/');
+            if (slash) *slash = '\0';
+            snprintf(real, sizeof(real), "%s/%s", base, linkbuf);
+        } else {
+            snprintf(real, sizeof(real), "%s", linkbuf);
+        }
+        usb_busid_from_sysfs_realpath(real, out, out_len);
+    }
+}
+
+static int hidraw_sysfs_device_path(const char *hidraw, char *out, size_t out_len)
+{
+    if (!hidraw || !hidraw[0] || !out || out_len == 0) {
+        return -1;
+    }
+    char link[PATH_MAX];
+    snprintf(link, sizeof(link), "/sys/class/hidraw/%s/device", hidraw);
+    if (realpath(link, out)) {
+        return 0;
+    }
+    DIR *d = opendir("/sys/class/input");
+    if (!d) {
+        return -1;
+    }
+    struct dirent *ent;
+    int rc = -1;
+    while ((ent = readdir(d)) != NULL) {
+        if (strncmp(ent->d_name, "input", 5) != 0) {
+            continue;
+        }
+        char hp[PATH_MAX];
+        snprintf(hp, sizeof(hp), "/sys/class/input/%s/device/hidraw/%s",
+                 ent->d_name, hidraw);
+        if (realpath(hp, out)) {
+            rc = 0;
+            break;
+        }
+    }
+    closedir(d);
+    return rc;
+}
+
+void usb_busid_from_hidraw_name(const char *hidraw, char *out, size_t out_len)
+{
+    out[0] = '\0';
+    if (!hidraw || !hidraw[0]) {
+        return;
+    }
+    char real[PATH_MAX];
+    if (hidraw_sysfs_device_path(hidraw, real, sizeof(real)) == 0) {
+        usb_busid_from_sysfs_realpath(real, out, out_len);
+        if (out[0]) {
+            return;
+        }
+    }
+    char node[64];
+    snprintf(node, sizeof(node), "/dev/%s", hidraw);
+    int fd = open(node, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return;
+    }
+    char phys[TEXT_LEN] = {0};
+    if (ioctl(fd, HIDIOCGRAWPHYS(sizeof(phys) - 1), phys) >= 0 && phys[0]) {
+        DIR *d = opendir("/sys/class/input");
+        if (d) {
+            struct dirent *ent;
+            while ((ent = readdir(d)) != NULL) {
+                if (strncmp(ent->d_name, "input", 5) != 0) {
+                    continue;
+                }
+                char input_path[PATH_MAX];
+                char input_phys[TEXT_LEN] = {0};
+                snprintf(input_path, sizeof(input_path), "/sys/class/input/%s/phys", ent->d_name);
+                read_text_file(input_path, input_phys, sizeof(input_phys));
+                if (!input_phys[0] || strcmp(input_phys, phys) != 0) {
+                    continue;
+                }
+                snprintf(input_path, sizeof(input_path), "/sys/class/input/%s", ent->d_name);
+                usb_busid_from_input_path(input_path, out, out_len);
+                if (out[0]) {
+                    break;
+                }
+            }
+            closedir(d);
+        }
+    }
+    close(fd);
+}
+
+static void logical_device_merge_fields(logical_device_t *item, const device_info_t *dev)
+{
+    if (!item || !dev) return;
+    if (!item->usb_busid[0] && dev->usb_busid[0]) {
+        snprintf(item->usb_busid, sizeof(item->usb_busid), "%s", dev->usb_busid);
+    }
+    if (!item->mac[0] && dev->mac[0]) {
+        snprintf(item->mac, sizeof(item->mac), "%s", dev->mac);
+    }
+    if (!item->bus[0] && dev->bus[0]) {
+        snprintf(item->bus, sizeof(item->bus), "%s", dev->bus);
+    }
+    if ((!item->vid[0] || !item->pid[0]) && dev->vid[0] && dev->pid[0]) {
+        if (!item->vid[0]) snprintf(item->vid, sizeof(item->vid), "%s", dev->vid);
+        if (!item->pid[0]) snprintf(item->pid, sizeof(item->pid), "%s", dev->pid);
+    }
+}
+
+static void enrich_scan_usb_busids(scan_result_t *result)
+{
+    for (int i = 0; i < result->count; ++i) {
+        device_info_t *dev = &result->devices[i];
+        if (dev->usb_busid[0]) continue;
+        if (dev->hidraw[0]) {
+            usb_busid_from_hidraw_name(dev->hidraw, dev->usb_busid, sizeof(dev->usb_busid));
+        } else if (dev->inputs[0]) {
+            char link[PATH_MAX];
+            snprintf(link, sizeof(link), "/sys/class/input/%s/device", dev->inputs);
+            usb_busid_from_sysfs_path(link, dev->usb_busid, sizeof(dev->usb_busid));
+        }
+    }
+    for (int i = 0; i < result->count; ++i) {
+        device_info_t *anchor = &result->devices[i];
+        if (!anchor->usb_busid[0] || !is_flydigi_usb_busid(anchor->usb_busid)) {
+            continue;
+        }
+        for (int j = 0; j < result->count; ++j) {
+            if (i == j) {
+                continue;
+            }
+            device_info_t *dev = &result->devices[j];
+            if (dev->usb_busid[0] || !dev->hidraw[0]) {
+                continue;
+            }
+            char peer[64] = {0};
+            usb_busid_from_hidraw_name(dev->hidraw, peer, sizeof(peer));
+            if (peer[0] && strcmp(peer, anchor->usb_busid) == 0) {
+                snprintf(dev->usb_busid, sizeof(dev->usb_busid), "%s", anchor->usb_busid);
+            }
+        }
+    }
+}
+
+static void tag_xpad_flydigi_candidates(scan_result_t *result)
+{
+    for (int i = 0; i < result->count; ++i) {
+        device_info_t *dev = &result->devices[i];
+        if (!dev->usb_busid[0] || dev->hidraw[0]) continue;
+        if (!is_xpad_compatible_pid(dev->vid, dev->pid)) continue;
+        if (!is_flydigi_usb_busid(dev->usb_busid)) continue;
+        char mfg[TEXT_LEN] = {0};
+        char prod[TEXT_LEN] = {0};
+        read_usb_identity_attrs(dev->usb_busid, mfg, sizeof(mfg), prod, sizeof(prod));
+        if (prod[0] && !contains_ci(dev->name, "flydigi") && !contains_ci(dev->name, "apex") &&
+            !contains_ci(dev->name, "vader")) {
+            snprintf(dev->name, sizeof(dev->name), "%s", prod);
+        }
+    }
+}
+
 bool is_steam_puck_device(const device_info_t *dev)
 {
     return dev && strcmp(dev->vid, "28de") == 0 && strcmp(dev->pid, "1304") == 0;
+}
+
+bool is_xpad_only_scan_device(const device_info_t *dev)
+{
+    return dev && !dev->hidraw[0] && dev->usb_busid[0] &&
+           is_xpad_compatible_pid(dev->vid, dev->pid);
+}
+
+bool is_flydigi_composite_device(const device_info_t *dev)
+{
+    if (!dev) return false;
+    if (strcmp(dev->vid, "04b4") == 0 && strcmp(dev->pid, "2412") == 0) return true;
+    if (dev->usb_busid[0] && is_flydigi_usb_busid(dev->usb_busid)) return true;
+    if (dev->usb_busid[0] &&
+        (contains_ci(dev->name, "flydigi") || contains_ci(dev->name, "vader") ||
+         contains_ci(dev->name, "apex"))) {
+        return true;
+    }
+    if (is_xpad_compatible_pid(dev->vid, dev->pid) && dev->usb_busid[0] &&
+        is_flydigi_usb_busid(dev->usb_busid)) {
+        return true;
+    }
+    return false;
+}
+
+bool is_flydigi_logical_device(const logical_device_t *item)
+{
+    return item && starts_with(item->key, "flydigi:");
 }
 
 bool is_ds5_device(const device_info_t *dev)
@@ -249,10 +577,9 @@ void steam_root_from_phys(const char *phys, char *out, size_t out_len)
 void logical_key_for_device(const device_info_t *dev, char *out, size_t out_len)
 {
     if (is_steam_puck_device(dev)) {
-        /* Group ALL interfaces of the dongle (up to 4 slots x 3 interfaces)
-         * under one logical device, so every hidraw is visible under one
-         * expand instead of splitting by per-interface phys. */
         snprintf(out, out_len, "steam:%s:%s", dev->vid, dev->pid);
+    } else if (is_flydigi_composite_device(dev) && dev->usb_busid[0]) {
+        snprintf(out, out_len, "flydigi:%s", dev->usb_busid);
     } else if (dev && !dev->hidraw[0] && dev->usb_busid[0]) {
         snprintf(out, out_len, "usb:%s", dev->usb_busid);
     } else if (dev && !dev->hidraw[0] && dev->inputs[0]) {
@@ -266,6 +593,26 @@ void logical_name_for_device(const device_info_t *dev, char *out, size_t out_len
 {
     if (is_steam_puck_device(dev)) {
         snprintf(out, out_len, "Valve Software Steam Controller Puck");
+    } else if (is_flydigi_composite_device(dev)) {
+        char mfg[TEXT_LEN] = {0};
+        char prod[TEXT_LEN] = {0};
+        if (dev->usb_busid[0]) {
+            read_usb_identity_attrs(dev->usb_busid, mfg, sizeof(mfg), prod, sizeof(prod));
+        }
+        if (is_xpad_compatible_pid(dev->vid, dev->pid) &&
+            (contains_ci(prod, "flydigi") || contains_ci(mfg, "flydigi"))) {
+            snprintf(out, out_len, "Flydigi Apex 4");
+        } else if (contains_ci(prod, "apex") || contains_ci(dev->name, "apex")) {
+            snprintf(out, out_len, "Flydigi Apex 4");
+        } else if (contains_ci(prod, "vader") || contains_ci(dev->name, "vader")) {
+            snprintf(out, out_len, "Flydigi Vader3");
+        } else if (contains_ci(prod, "flydigi") || contains_ci(dev->name, "flydigi")) {
+            snprintf(out, out_len, "%s", prod[0] ? prod : "Flydigi Controller");
+        } else if (dev->name[0]) {
+            snprintf(out, out_len, "%s", dev->name);
+        } else {
+            snprintf(out, out_len, "Flydigi Controller");
+        }
     } else if (is_ds5_device(dev)) {
         snprintf(out, out_len, "Sony DS5 Controller");
     } else if (is_ds4_device(dev)) {
@@ -279,6 +626,19 @@ void logical_name_for_device(const device_info_t *dev, char *out, size_t out_len
     } else {
         snprintf(out, out_len, "%s", dev->name[0] ? dev->name : "Unnamed HID device");
     }
+}
+
+bool device_should_list_in_ui(const device_info_t *dev)
+{
+    if (!dev) {
+        return false;
+    }
+    char name[TEXT_LEN];
+    logical_name_for_device(dev, name, sizeof(name));
+    if (strcmp(name, "Unnamed HID device") == 0) {
+        return false;
+    }
+    return true;
 }
 
 bool plug_key_is_set(const char *key)
@@ -337,7 +697,9 @@ void set_expand_key(const char *key, bool expanded)
 
 bool logical_device_can_expand(const logical_device_t *item)
 {
-    return item && starts_with(item->key, "steam:") && item->device_count > 1;
+    return item &&
+           ((starts_with(item->key, "steam:") || starts_with(item->key, "flydigi:")) &&
+            item->device_count > 1);
 }
 
 logical_device_t *find_or_add_logical_device(logical_result_t *logical, const device_info_t *dev, int scan_index)
@@ -348,6 +710,7 @@ logical_device_t *find_or_add_logical_device(logical_result_t *logical, const de
     for (int i = 0; i < logical->count; ++i) {
         if (strcmp(logical->items[i].key, key) == 0) {
             logical_device_t *item = &logical->items[i];
+            logical_device_merge_fields(item, dev);
             if (item->device_count < MAX_DEVICES) {
                 item->device_indices[item->device_count++] = scan_index;
             }
@@ -377,8 +740,74 @@ void build_logical_devices(const scan_result_t *scan, logical_result_t *logical)
 {
     memset(logical, 0, sizeof(*logical));
     for (int i = 0; i < scan->count; ++i) {
+        if (!device_should_list_in_ui(&scan->devices[i])) {
+            continue;
+        }
         find_or_add_logical_device(logical, &scan->devices[i], i);
     }
+    finalize_logical_devices(logical);
+}
+
+void finalize_logical_devices(logical_result_t *logical)
+{
+    if (!logical) return;
+    for (int i = 0; i < logical->count; ++i) {
+        logical_device_t *item = &logical->items[i];
+        for (int j = 0; j < item->device_count; ++j) {
+            int idx = item->device_indices[j];
+            if (idx < 0 || idx >= g_scan.count) continue;
+            logical_device_merge_fields(item, &g_scan.devices[idx]);
+        }
+        if (!item->usb_busid[0] && starts_with(item->key, "flydigi:")) {
+            const char *from_key = item->key + strlen("flydigi:");
+            if (from_key[0]) {
+                snprintf(item->usb_busid, sizeof(item->usb_busid), "%s", from_key);
+            }
+        }
+        if (starts_with(item->key, "flydigi:") && item->usb_busid[0]) {
+            char usbdir[512];
+            if (composite_usb_device_dir_by_busid(item->usb_busid, usbdir, sizeof(usbdir)) == 0) {
+                char path[600];
+                char v[16] = {0};
+                char p[16] = {0};
+                snprintf(path, sizeof(path), "%s/idVendor", usbdir);
+                read_text_file(path, v, sizeof(v));
+                snprintf(path, sizeof(path), "%s/idProduct", usbdir);
+                read_text_file(path, p, sizeof(p));
+                if (v[0]) snprintf(item->vid, sizeof(item->vid), "%s", v);
+                if (p[0]) snprintf(item->pid, sizeof(item->pid), "%s", p);
+            }
+            if (item->device_count > 0) {
+                int idx = item->device_indices[0];
+                if (idx >= 0 && idx < g_scan.count) {
+                    logical_name_for_device(&g_scan.devices[idx], item->name, sizeof(item->name));
+                }
+            }
+            {
+                char mfg[64] = {0};
+                char prod[64] = {0};
+                if (read_usb_identity_attrs(item->usb_busid, mfg, sizeof(mfg), prod, sizeof(prod)) == 0 &&
+                    prod[0]) {
+                    if (contains_ci(prod, "apex")) {
+                        snprintf(item->name, sizeof(item->name), "Flydigi Apex 4");
+                    } else if (contains_ci(prod, "vader")) {
+                        snprintf(item->name, sizeof(item->name), "Flydigi Vader3");
+                    }
+                }
+            }
+        }
+    }
+    int kept = 0;
+    for (int i = 0; i < logical->count; ++i) {
+        if (strcmp(logical->items[i].name, "Unnamed HID device") == 0) {
+            continue;
+        }
+        if (kept != i) {
+            logical->items[kept] = logical->items[i];
+        }
+        kept++;
+    }
+    logical->count = kept;
 }
 
 /* --- Steam Puck USB-interface enumeration (shared by the list + detail) -----
@@ -450,7 +879,7 @@ int puck_usb_device_dir(const char *vid, const char *pid, char *out, size_t out_
         char link[PATH_MAX], real[PATH_MAX];
         snprintf(link, sizeof(link), "/sys/class/input/%s/device", e->d_name);
         if (!realpath(link, real)) continue;
-        while (real[0]) {                       /* walk up to the USB device dir (has idVendor) */
+        while (real[0]) {
             char idf[PATH_MAX];
             struct stat st;
             snprintf(idf, sizeof(idf), "%s/idVendor", real);
@@ -468,7 +897,41 @@ int puck_usb_device_dir(const char *vid, const char *pid, char *out, size_t out_
     return rc;
 }
 
-int puck_enumerate_ifaces(const char *usbdir, puck_if_t *out, int max)
+int composite_usb_device_dir_by_busid(const char *usb_busid, char *out, size_t out_len)
+{
+    if (!usb_busid || !usb_busid[0]) return -1;
+    DIR *d = opendir("/sys/class/input");
+    if (!d) return -1;
+    struct dirent *e;
+    int rc = -1;
+    while ((e = readdir(d)) != NULL && rc != 0) {
+        if (strncmp(e->d_name, "input", 5) != 0) continue;
+        char input_path[PATH_MAX], busid[64] = {0};
+        snprintf(input_path, sizeof(input_path), "/sys/class/input/%s", e->d_name);
+        usb_busid_from_input_path(input_path, busid, sizeof(busid));
+        if (strcmp(busid, usb_busid) != 0) continue;
+        char link[PATH_MAX], real[PATH_MAX];
+        snprintf(link, sizeof(link), "%s/device", input_path);
+        if (!realpath(link, real)) continue;
+        while (real[0]) {
+            char idf[PATH_MAX];
+            struct stat st;
+            snprintf(idf, sizeof(idf), "%s/idVendor", real);
+            if (stat(idf, &st) == 0) {
+                snprintf(out, out_len, "%s", real);
+                rc = 0;
+                break;
+            }
+            char *s = strrchr(real, '/');
+            if (!s || s == real) break;
+            *s = '\0';
+        }
+    }
+    closedir(d);
+    return rc;
+}
+
+int composite_enumerate_ifaces(const char *usbdir, composite_if_t *out, int max)
 {
     const char *base = strrchr(usbdir, '/');
     base = base ? base + 1 : usbdir;
@@ -493,10 +956,19 @@ int puck_enumerate_ifaces(const char *usbdir, puck_if_t *out, int max)
     closedir(d);
     for (int a = 0; a < n; ++a) {
         for (int b = a + 1; b < n; ++b) {
-            if (out[b].num < out[a].num) { puck_if_t t = out[a]; out[a] = out[b]; out[b] = t; }
+            if (out[b].num < out[a].num) {
+                composite_if_t t = out[a];
+                out[a] = out[b];
+                out[b] = t;
+            }
         }
     }
     return n;
+}
+
+int puck_enumerate_ifaces(const char *usbdir, puck_if_t *out, int max)
+{
+    return composite_enumerate_ifaces(usbdir, out, max);
 }
 
 /* Raw (binary) sysfs read — for `descriptors` and `report_descriptor` blobs
@@ -534,48 +1006,667 @@ static int read_iface_rdesc(const char *usbdir, const char *dir, uint8_t *out, i
     return len;
 }
 
-/* Stage 1: capture the puck's full USB enumeration once (device+config blob +
- * each HID interface's report descriptor) and cache it in g_puck_enum. Idempotent
- * per USB device; invalidates if the puck is gone. Returns 0 on success. */
-int puck_enum_capture(const char *vid, const char *pid)
+static uint8_t read_usb_full_speed_flag(const char *usbdir)
+{
+    char speed[16] = {0};
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/speed", usbdir);
+    read_text_file(path, speed, sizeof(speed));
+    return (strcmp(speed, "12") == 0 || strcmp(speed, "1.5") == 0) ? 1 : 0;
+}
+
+static composite_enum_t *composite_enum_slot(const char *key)
+{
+    if (!key || !key[0]) return NULL;
+    for (int i = 0; i < g_composite_enum_count; ++i) {
+        if (strcmp(g_composite_enums[i].key, key) == 0) {
+            return &g_composite_enums[i];
+        }
+    }
+    if (g_composite_enum_count >= COMPOSITE_ENUM_MAX_CACHE) {
+        return NULL;
+    }
+    composite_enum_t *slot = &g_composite_enums[g_composite_enum_count++];
+    memset(slot, 0, sizeof(*slot));
+    snprintf(slot->key, sizeof(slot->key), "%s", key);
+    return slot;
+}
+
+static void sync_legacy_puck_enum(void)
+{
+    memset(&g_puck_enum, 0, sizeof(g_puck_enum));
+    for (int i = 0; i < g_composite_enum_count; ++i) {
+        if (g_composite_enums[i].valid) {
+            g_puck_enum = g_composite_enums[i];
+            return;
+        }
+    }
+}
+
+const composite_enum_t *composite_enum_lookup(const char *key)
+{
+    if (!key || !key[0]) return NULL;
+    for (int i = 0; i < g_composite_enum_count; ++i) {
+        if (g_composite_enums[i].valid && strcmp(g_composite_enums[i].key, key) == 0) {
+            return &g_composite_enums[i];
+        }
+    }
+    return NULL;
+}
+
+static const char *composite_enum_key_for_device(const char *usb_busid, const char *usbdir)
+{
+    static char key[64];
+    if (usb_busid && usb_busid[0]) {
+        snprintf(key, sizeof(key), "%s", usb_busid);
+        return key;
+    }
+    const char *base = strrchr(usbdir, '/');
+    snprintf(key, sizeof(key), "%s", base ? base + 1 : usbdir);
+    return key;
+}
+
+int composite_enum_capture(const char *usb_busid, const char *vid, const char *pid)
 {
     char usbdir[256];
-    if (puck_usb_device_dir(vid, pid, usbdir, sizeof(usbdir)) != 0) {
-        g_puck_enum.valid = 0;
+    if (usb_busid && usb_busid[0] &&
+        composite_usb_device_dir_by_busid(usb_busid, usbdir, sizeof(usbdir)) == 0) {
+        /* resolved by bus id (Flydigi Xbox-emulation mode) */
+    } else if (vid && pid && puck_usb_device_dir(vid, pid, usbdir, sizeof(usbdir)) == 0) {
+        /* resolved by VID/PID (Steam Puck, native Flydigi) */
+    } else {
+        sync_legacy_puck_enum();
         return -1;
     }
-    if (g_puck_enum.valid && strcmp(g_puck_enum.usbdir, usbdir) == 0) {
-        return 0;                                   /* already captured this device */
+
+    const char *key = composite_enum_key_for_device(usb_busid, usbdir);
+    composite_enum_t *cache = composite_enum_slot(key);
+    if (!cache) return -1;
+    if (cache->valid && strcmp(cache->usbdir, usbdir) == 0) {
+        sync_legacy_puck_enum();
+        return 0;
     }
-    memset(&g_puck_enum, 0, sizeof(g_puck_enum));
-    snprintf(g_puck_enum.usbdir, sizeof(g_puck_enum.usbdir), "%s", usbdir);
+
+    memset(cache, 0, sizeof(*cache));
+    snprintf(cache->key, sizeof(cache->key), "%s", key);
+    snprintf(cache->usbdir, sizeof(cache->usbdir), "%s", usbdir);
+    cache->full_speed = read_usb_full_speed_flag(usbdir);
 
     char attr[300];
     snprintf(attr, sizeof(attr), "%s/descriptors", usbdir);
-    g_puck_enum.descriptors_len = read_binary_file(attr, g_puck_enum.descriptors, PUCK_ENUM_MAX_DESC);
+    cache->descriptors_len = read_binary_file(attr, cache->descriptors, COMPOSITE_ENUM_MAX_DESC);
     snprintf(attr, sizeof(attr), "%s/serial", usbdir);
-    read_text_file(attr, g_puck_enum.serial, sizeof(g_puck_enum.serial));
+    read_text_file(attr, cache->serial, sizeof(cache->serial));
 
-    puck_if_t ifs[16];
-    int nif = puck_enumerate_ifaces(usbdir, ifs, 16);
-    for (int i = 0; i < nif && g_puck_enum.if_count < PUCK_ENUM_MAX_IF; ++i) {
-        puck_enum_if_t *de = &g_puck_enum.ifs[g_puck_enum.if_count++];
+    composite_if_t ifs[16];
+    int nif = composite_enumerate_ifaces(usbdir, ifs, 16);
+    bool xinput_ff_enum = false;
+    if (usb_busid && usb_busid[0] && is_flydigi_usb_busid(usb_busid)) {
+        char xpad_probe[64];
+        xinput_ff_enum = flydigi_xpad_evdev_path_for_busid(usb_busid, xpad_probe,
+                                                            sizeof(xpad_probe)) == 0 &&
+                         !flydigi_has_hidraw_for_busid(usb_busid);
+    }
+    for (int i = 0; i < nif && cache->if_count < COMPOSITE_ENUM_MAX_IF; ++i) {
+        if (xinput_ff_enum && strncmp(ifs[i].cls, "ff", 2) == 0) {
+            char ifdir[PATH_MAX], protof[PATH_MAX], proto[8] = {0};
+            snprintf(ifdir, sizeof(ifdir), "%s/%s", usbdir, ifs[i].dir);
+            snprintf(protof, sizeof(protof), "%s/bInterfaceProtocol", ifdir);
+            read_text_file(protof, proto, sizeof(proto));
+            composite_enum_if_t *de = &cache->ifs[cache->if_count++];
+            de->num = ifs[i].num;
+            snprintf(de->cls, sizeof(de->cls), "%s", ifs[i].cls);
+            snprintf(de->node, sizeof(de->node), "%s", ifs[i].node);
+            de->rdesc_len = 0;
+            if (strtoul(proto, NULL, 16) == 0x01u &&
+                flydigi_xbox360_wired_rdesc_len <= COMPOSITE_ENUM_MAX_RDESC) {
+                memcpy(de->rdesc, flydigi_xbox360_wired_rdesc, flydigi_xbox360_wired_rdesc_len);
+                de->rdesc_len = (int)flydigi_xbox360_wired_rdesc_len;
+                log_append("enum: iface %d xpad ff synthetic rdesc (%dB)", de->num, de->rdesc_len);
+            }
+            continue;
+        }
+        if (strncmp(ifs[i].cls, "03", 2) != 0) {
+            continue;
+        }
+        composite_enum_if_t *de = &cache->ifs[cache->if_count++];
         de->num = ifs[i].num;
         snprintf(de->cls, sizeof(de->cls), "%s", ifs[i].cls);
         snprintf(de->node, sizeof(de->node), "%s", ifs[i].node);
-        if (strncmp(ifs[i].cls, "03", 2) == 0) {
-            de->rdesc_len = read_iface_rdesc(usbdir, ifs[i].dir, de->rdesc, PUCK_ENUM_MAX_RDESC);
+        de->rdesc_len = read_iface_rdesc(usbdir, ifs[i].dir, de->rdesc, COMPOSITE_ENUM_MAX_RDESC);
+        if (de->rdesc_len == 0 && !de->node[0] && usb_busid && usb_busid[0]) {
+            char xpad_probe[64];
+            if (flydigi_xpad_evdev_path_for_busid(usb_busid, xpad_probe, sizeof(xpad_probe)) == 0 &&
+                flydigi_xbox360_wired_rdesc_len <= COMPOSITE_ENUM_MAX_RDESC) {
+                memcpy(de->rdesc, flydigi_xbox360_wired_rdesc, flydigi_xbox360_wired_rdesc_len);
+                de->rdesc_len = (int)flydigi_xbox360_wired_rdesc_len;
+                log_append("enum: iface %d xpad synthetic rdesc (%dB)", de->num, de->rdesc_len);
+            }
         }
     }
-    g_puck_enum.valid = 1;
-    log_append("puck enum: %s desc=%dB ifaces=%d serial=%s",
-               usbdir, g_puck_enum.descriptors_len, g_puck_enum.if_count, g_puck_enum.serial);
-    for (int i = 0; i < g_puck_enum.if_count; ++i) {
-        log_append("  if 1.%d cls=%s rdesc=%dB %s", g_puck_enum.ifs[i].num,
-                   g_puck_enum.ifs[i].cls, g_puck_enum.ifs[i].rdesc_len,
-                   g_puck_enum.ifs[i].node[0] ? g_puck_enum.ifs[i].node : "-");
+    cache->valid = 1;
+    log_append("composite enum: %s key=%s desc=%dB ifaces=%d full_speed=%u serial=%s",
+               usbdir, key, cache->descriptors_len, cache->if_count, cache->full_speed, cache->serial);
+    for (int i = 0; i < cache->if_count; ++i) {
+        log_append("  if 1.%d cls=%s rdesc=%dB %s", cache->ifs[i].num,
+                   cache->ifs[i].cls, cache->ifs[i].rdesc_len,
+                   cache->ifs[i].node[0] ? cache->ifs[i].node : "-");
     }
+    sync_legacy_puck_enum();
     return 0;
+}
+
+int puck_enum_capture(const char *vid, const char *pid)
+{
+    return composite_enum_capture(NULL, vid, pid);
+}
+
+#define LG_VENDOR_ID 0x005du
+
+static bool gamepad_iface_candidate(uint16_t vendor_id, uint16_t usage_page, uint16_t usage)
+{
+    if (vendor_id == LG_VENDOR_ID) {
+        return false;
+    }
+    if (usage_page == 0x01 && (usage == 0x04 || usage == 0x05)) {
+        return true;
+    }
+    if (usage_page == 0x01 && (usage == 0x02 || usage == 0x06)) {
+        return false;
+    }
+    if (usage_page >= 0xff00) {
+        return true;
+    }
+    if (usage_page == 0x01 && usage == 0x08) {
+        return true;
+    }
+    if (usage_page == 0 && usage == 0) {
+        switch (vendor_id) {
+            case 0x045e: case 0x054c: case 0x057e: case 0x04b4: case 0x3537:
+            case 0x2dc8: case 0x0e6f: case 0x1532: case 0x0738: case 0x046d:
+            case 0x20d6: case 0x24c6: case 0x2563: case 0x28de: case 0x0079:
+            case 0x0810: case 0x1038: case 0x146b: case 0x1949: case 0x1bad:
+            case 0x2378:
+                return true;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+static int gamepad_iface_score(uint16_t vendor_id, uint16_t usage_page, uint16_t usage)
+{
+    if (!gamepad_iface_candidate(vendor_id, usage_page, usage)) {
+        return -1;
+    }
+    if (usage_page == 0x01 && usage == 0x05) return 100;
+    if (usage_page == 0x01 && usage == 0x04) return 90;
+    if (usage_page >= 0xff00) return 50;
+    if (usage_page == 0x01 && usage == 0x08) return 40;
+    (void) vendor_id;
+    return 10;
+}
+
+static int gamepad_iface_score_for_device(const device_info_t *dev)
+{
+    if (!dev) return -1;
+    if (!dev->hidraw[0]) {
+        if (is_xpad_only_scan_device(dev) && dev->usb_busid[0] &&
+            is_flydigi_usb_busid(dev->usb_busid)) {
+            return 120;
+        }
+        return -1;
+    }
+    if (dev->iface[0]) {
+        if (contains_ci(dev->iface, "mouse")) return -1;
+        if (contains_ci(dev->iface, "keyboard")) return -1;
+    }
+    uint16_t vid = (uint16_t)strtoul(dev->vid, NULL, 16);
+    int score = gamepad_iface_score(vid, dev->usage_page, dev->usage);
+    if (dev->usb_busid[0] && is_flydigi_usb_busid(dev->usb_busid)) {
+        if (score < 0) score = 60;
+        else score += 15;
+    }
+    if (dev->name[0] &&
+        (contains_ci(dev->name, "flydigi") || contains_ci(dev->name, "vader") ||
+         contains_ci(dev->name, "apex"))) {
+        if (score < 0) score = 60;
+        else score += 15;
+    }
+    if (dev->iface[0] && contains_ci(dev->iface, "vendor")) {
+        if (score < 0) score = 55;
+        else score += 10;
+    }
+    return score;
+}
+
+int best_scan_index_for_item(const logical_device_t *item)
+{
+    if (!item || item->device_count <= 0) return -1;
+    int best = -1;
+    int best_score = -1;
+    int first_hidraw = -1;
+    int xpad_only = -1;
+    for (int i = 0; i < item->device_count; ++i) {
+        int idx = item->device_indices[i];
+        if (idx < 0 || idx >= g_scan.count) continue;
+        const device_info_t *dev = &g_scan.devices[idx];
+        if (dev->hidraw[0]) {
+            if (first_hidraw < 0) first_hidraw = idx;
+            int score = gamepad_iface_score_for_device(dev);
+            if (score > best_score) {
+                best_score = score;
+                best = idx;
+            }
+        } else if (is_xpad_only_scan_device(dev)) {
+            if (xpad_only < 0) xpad_only = idx;
+            int score = gamepad_iface_score_for_device(dev);
+            if (score > best_score) {
+                best_score = score;
+                best = idx;
+            }
+        }
+    }
+    if (best >= 0) return best;
+    if (first_hidraw >= 0) return first_hidraw;
+    if (xpad_only >= 0) return xpad_only;
+    return item->device_indices[0];
+}
+
+static int flydigi_hidraw_pick(const char *usb_busid, const logical_device_t *only_item)
+{
+    int best_idx = -1;
+    int best_score = -1;
+    int first_idx = -1;
+    const int loops = only_item ? only_item->device_count : g_scan.count;
+    for (int p = 0; p < loops; ++p) {
+        int i = only_item ? only_item->device_indices[p] : p;
+        if (i < 0 || i >= g_scan.count) continue;
+        const device_info_t *dev = &g_scan.devices[i];
+        if (!dev->hidraw[0]) continue;
+
+        char peer_busid[64] = {0};
+        snprintf(peer_busid, sizeof(peer_busid), "%s", dev->usb_busid);
+        if (!peer_busid[0]) {
+            usb_busid_from_hidraw_name(dev->hidraw, peer_busid, sizeof(peer_busid));
+        }
+        if (usb_busid && usb_busid[0]) {
+            if (!peer_busid[0] || strcmp(peer_busid, usb_busid) != 0) continue;
+        } else if (peer_busid[0]) {
+            if (!is_flydigi_usb_busid(peer_busid)) continue;
+        } else if (!is_flydigi_composite_device(dev)) {
+            continue;
+        }
+
+        if (first_idx < 0) first_idx = i;
+        int score = gamepad_iface_score_for_device(dev);
+        if (score > best_score) {
+            best_score = score;
+            best_idx = i;
+        }
+    }
+    if (first_idx < 0 && only_item) {
+        return flydigi_hidraw_pick(usb_busid, NULL);
+    }
+    return best_idx >= 0 ? best_idx : first_idx;
+}
+
+static bool flydigi_hidraw_is_mouse(const device_info_t *dev)
+{
+    if (!dev) return false;
+    if (dev->iface[0] && contains_ci(dev->iface, "mouse")) return true;
+    if (dev->name[0] && contains_ci(dev->name, "mouse")) return true;
+    return false;
+}
+
+static bool flydigi_has_gamepad_hidraw_for_busid(const char *usb_busid)
+{
+    if (!usb_busid || !usb_busid[0]) return false;
+    for (int i = 0; i < g_scan.count; ++i) {
+        const device_info_t *dev = &g_scan.devices[i];
+        if (!dev->hidraw[0]) continue;
+
+        char peer_busid[64] = {0};
+        snprintf(peer_busid, sizeof(peer_busid), "%s", dev->usb_busid);
+        if (!peer_busid[0]) {
+            usb_busid_from_hidraw_name(dev->hidraw, peer_busid, sizeof(peer_busid));
+        }
+        if (!peer_busid[0] || strcmp(peer_busid, usb_busid) != 0) continue;
+        if (gamepad_iface_score_for_device(dev) >= 90) return true;
+    }
+    return false;
+}
+
+bool flydigi_is_xinput_mode_for_busid(const char *usb_busid)
+{
+    char xpad_path[64];
+    if (!usb_busid || !usb_busid[0]) return false;
+    if (flydigi_xpad_evdev_path_for_busid(usb_busid, xpad_path, sizeof(xpad_path)) != 0) {
+        return false;
+    }
+    return !flydigi_has_gamepad_hidraw_for_busid(usb_busid);
+}
+
+bool flydigi_is_xinput_mode(const logical_device_t *item)
+{
+    if (!item) return false;
+    char busid[64] = {0};
+    if (item->usb_busid[0]) {
+        snprintf(busid, sizeof(busid), "%s", item->usb_busid);
+    } else if (starts_with(item->key, "flydigi:")) {
+        snprintf(busid, sizeof(busid), "%s", item->key + strlen("flydigi:"));
+    }
+    return flydigi_is_xinput_mode_for_busid(busid);
+}
+
+bool flydigi_has_hidraw_for_busid(const char *usb_busid)
+{
+    if (!usb_busid || !usb_busid[0]) {
+        return false;
+    }
+    for (int i = 0; i < g_scan.count; ++i) {
+        const device_info_t *dev = &g_scan.devices[i];
+        if (!dev->hidraw[0]) {
+            continue;
+        }
+        char peer_busid[64] = {0};
+        snprintf(peer_busid, sizeof(peer_busid), "%s", dev->usb_busid);
+        if (!peer_busid[0]) {
+            usb_busid_from_hidraw_name(dev->hidraw, peer_busid, sizeof(peer_busid));
+        }
+        if (peer_busid[0] && strcmp(peer_busid, usb_busid) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool flydigi_is_xinput_evdev_only_for_busid(const char *usb_busid)
+{
+    char xpad_path[64];
+    if (!usb_busid || !usb_busid[0] || !is_flydigi_usb_busid(usb_busid)) {
+        return false;
+    }
+    if (flydigi_xpad_evdev_path_for_busid(usb_busid, xpad_path, sizeof(xpad_path)) != 0) {
+        return false;
+    }
+    return !flydigi_has_hidraw_for_busid(usb_busid);
+}
+
+bool flydigi_is_xinput_evdev_only(const logical_device_t *item)
+{
+    if (!item) {
+        return false;
+    }
+    char busid[64] = {0};
+    if (item->usb_busid[0]) {
+        snprintf(busid, sizeof(busid), "%s", item->usb_busid);
+    } else if (starts_with(item->key, "flydigi:")) {
+        snprintf(busid, sizeof(busid), "%s", item->key + strlen("flydigi:"));
+    }
+    return flydigi_is_xinput_evdev_only_for_busid(busid);
+}
+
+int flydigi_xpad_scan_index_for_item(const logical_device_t *item)
+{
+    if (!item) {
+        return -1;
+    }
+    char busid[64] = {0};
+    if (item->usb_busid[0]) {
+        snprintf(busid, sizeof(busid), "%s", item->usb_busid);
+    } else if (starts_with(item->key, "flydigi:")) {
+        snprintf(busid, sizeof(busid), "%s", item->key + strlen("flydigi:"));
+    }
+    if (!flydigi_is_xinput_evdev_only_for_busid(busid)) {
+        return -1;
+    }
+    for (int p = 0; p < item->device_count; ++p) {
+        int idx = item->device_indices[p];
+        if (idx < 0 || idx >= g_scan.count) {
+            continue;
+        }
+        const device_info_t *dev = &g_scan.devices[idx];
+        if (dev->hidraw[0]) {
+            continue;
+        }
+        if (dev->usb_busid[0] && strcmp(dev->usb_busid, busid) == 0) {
+            return idx;
+        }
+    }
+    for (int i = 0; i < g_scan.count; ++i) {
+        const device_info_t *dev = &g_scan.devices[i];
+        if (dev->hidraw[0] || !dev->usb_busid[0]) {
+            continue;
+        }
+        if (strcmp(dev->usb_busid, busid) != 0) {
+            continue;
+        }
+        if (is_xpad_only_scan_device(dev) || is_xpad_compatible_pid(dev->vid, dev->pid)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int flydigi_handshake_hidraw_pick(const char *usb_busid, const logical_device_t *only_item)
+{
+    int first_idx = -1;
+    const int loops = only_item ? only_item->device_count : g_scan.count;
+    for (int p = 0; p < loops; ++p) {
+        int i = only_item ? only_item->device_indices[p] : p;
+        if (i < 0 || i >= g_scan.count) continue;
+        const device_info_t *dev = &g_scan.devices[i];
+        if (!dev->hidraw[0] || flydigi_hidraw_is_mouse(dev)) continue;
+
+        char peer_busid[64] = {0};
+        snprintf(peer_busid, sizeof(peer_busid), "%s", dev->usb_busid);
+        if (!peer_busid[0]) {
+            usb_busid_from_hidraw_name(dev->hidraw, peer_busid, sizeof(peer_busid));
+        }
+        if (usb_busid && usb_busid[0]) {
+            if (!peer_busid[0] || strcmp(peer_busid, usb_busid) != 0) continue;
+        } else if (peer_busid[0]) {
+            if (!is_flydigi_usb_busid(peer_busid)) continue;
+        } else if (!is_flydigi_composite_device(dev)) {
+            continue;
+        }
+
+        if (first_idx < 0) first_idx = i;
+    }
+    if (first_idx < 0 && only_item) {
+        return flydigi_handshake_hidraw_pick(usb_busid, NULL);
+    }
+    return first_idx;
+}
+
+int flydigi_handshake_hidraw_path_for_busid(const char *usb_busid, char *out, size_t out_len)
+{
+    if (!out || out_len == 0) return -1;
+    int pick = flydigi_handshake_hidraw_pick(usb_busid, NULL);
+    if (pick < 0) return -1;
+    snprintf(out, out_len, "%s", g_scan.devices[pick].node);
+    return 0;
+}
+
+int flydigi_handshake_hidraw_path_for_item(const logical_device_t *item, char *out, size_t out_len)
+{
+    if (!item || !out || out_len == 0) return -1;
+    char busid[64] = {0};
+    if (item->usb_busid[0]) {
+        snprintf(busid, sizeof(busid), "%s", item->usb_busid);
+    } else if (starts_with(item->key, "flydigi:")) {
+        snprintf(busid, sizeof(busid), "%s", item->key + strlen("flydigi:"));
+    }
+    int pick = flydigi_handshake_hidraw_pick(busid[0] ? busid : NULL, item);
+    if (pick < 0) return -1;
+    snprintf(out, out_len, "%s", g_scan.devices[pick].node);
+    return 0;
+}
+
+int flydigi_hidraw_path_for_busid(const char *usb_busid, char *out, size_t out_len)
+{
+    if (!out || out_len == 0) return -1;
+    int pick = flydigi_hidraw_pick(usb_busid, NULL);
+    if (pick < 0) return -1;
+    snprintf(out, out_len, "%s", g_scan.devices[pick].node);
+    return 0;
+}
+
+int flydigi_hidraw_path_for_item(const logical_device_t *item, char *out, size_t out_len)
+{
+    if (!item || !out || out_len == 0) return -1;
+    char busid[64] = {0};
+    if (item->usb_busid[0]) {
+        snprintf(busid, sizeof(busid), "%s", item->usb_busid);
+    } else if (starts_with(item->key, "flydigi:")) {
+        snprintf(busid, sizeof(busid), "%s", item->key + strlen("flydigi:"));
+    }
+    int pick = flydigi_hidraw_pick(busid[0] ? busid : NULL, item);
+    if (pick < 0) return -1;
+    snprintf(out, out_len, "%s", g_scan.devices[pick].node);
+    return 0;
+}
+
+static bool hex_id_matches(const char *text, unsigned int value)
+{
+    unsigned int parsed = 0;
+    if (!text || !text[0]) {
+        return false;
+    }
+    if (sscanf(text, "%x", &parsed) != 1) {
+        return false;
+    }
+    return parsed == value;
+}
+
+int flydigi_xpad_evdev_path_for_busid(const char *usb_busid, char *out, size_t out_len)
+{
+    if (!usb_busid || !usb_busid[0] || !out || out_len == 0) {
+        return -1;
+    }
+    DIR *d = opendir("/sys/class/input");
+    if (!d) {
+        return -1;
+    }
+    struct dirent *ent;
+    int rc = -1;
+    while ((ent = readdir(d)) != NULL) {
+        if (strncmp(ent->d_name, "input", 5) != 0) {
+            continue;
+        }
+        char input_path[PATH_MAX], busid[64] = {0};
+        snprintf(input_path, sizeof(input_path), "/sys/class/input/%s", ent->d_name);
+        usb_busid_from_input_path(input_path, busid, sizeof(busid));
+        if (strcmp(busid, usb_busid) != 0) {
+            continue;
+        }
+
+        char vendor[16] = {0}, product[16] = {0}, name[128] = {0};
+        char attr[PATH_MAX];
+        snprintf(attr, sizeof(attr), "%s/id/vendor", input_path);
+        read_text_file(attr, vendor, sizeof(vendor));
+        snprintf(attr, sizeof(attr), "%s/id/product", input_path);
+        read_text_file(attr, product, sizeof(product));
+        snprintf(attr, sizeof(attr), "%s/name", input_path);
+        read_text_file(attr, name, sizeof(name));
+        if (!hex_id_matches(vendor, 0x045e) || !hex_id_matches(product, 0x028e)) {
+            if (!contains_ci(name, "x-box") && !contains_ci(name, "xbox")) {
+                continue;
+            }
+        }
+
+        DIR *input = opendir(input_path);
+        if (!input) {
+            continue;
+        }
+        struct dirent *child;
+        while ((child = readdir(input)) != NULL) {
+            if (strncmp(child->d_name, "event", 5) != 0) {
+                continue;
+            }
+            snprintf(out, out_len, "/dev/input/%s", child->d_name);
+            rc = 0;
+            break;
+        }
+        closedir(input);
+        if (rc == 0) {
+            break;
+        }
+    }
+    closedir(d);
+    return rc;
+}
+
+int flydigi_xpad_evdev_path_for_item(const logical_device_t *item, char *out, size_t out_len)
+{
+    if (!item || !out || out_len == 0) {
+        return -1;
+    }
+    char busid[64] = {0};
+    if (item->usb_busid[0]) {
+        snprintf(busid, sizeof(busid), "%s", item->usb_busid);
+    } else if (starts_with(item->key, "flydigi:")) {
+        snprintf(busid, sizeof(busid), "%s", item->key + strlen("flydigi:"));
+    }
+    if (!busid[0]) {
+        return -1;
+    }
+    return flydigi_xpad_evdev_path_for_busid(busid, out, out_len);
+}
+
+bool flydigi_has_pluggable_path(const logical_device_t *item)
+{
+    char path[64];
+    if (flydigi_is_xinput_evdev_only(item)) {
+        return flydigi_xpad_evdev_path_for_item(item, path, sizeof(path)) == 0;
+    }
+    if (flydigi_handshake_hidraw_path_for_item(item, path, sizeof(path)) == 0) {
+        return true;
+    }
+    if (flydigi_is_xinput_mode(item) &&
+        flydigi_xpad_evdev_path_for_item(item, path, sizeof(path)) == 0) {
+        return true;
+    }
+    if (!flydigi_is_xinput_mode(item) &&
+        flydigi_hidraw_path_for_item(item, path, sizeof(path)) == 0) {
+        return true;
+    }
+    return false;
+}
+
+uint8_t *build_composite_enum_payload(const char *key, int *out_len)
+{
+    const composite_enum_t *cache = composite_enum_lookup(key);
+    if (!cache || !cache->valid || !out_len) return NULL;
+    int size = (int)sizeof(ctmb_enum_info_t) + cache->descriptors_len;
+    for (int i = 0; i < cache->if_count; ++i) {
+        size += (int)sizeof(ctmb_enum_iface_t) + cache->ifs[i].rdesc_len;
+    }
+    uint8_t *buf = (uint8_t *)malloc((size_t)size);
+    if (!buf) return NULL;
+    int off = 0;
+    ctmb_enum_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.descriptors_len = (uint16_t)cache->descriptors_len;
+    info.iface_count = (uint8_t)cache->if_count;
+    info.full_speed = cache->full_speed ? 1 : 0;
+    memcpy(buf + off, &info, sizeof(info)); off += (int)sizeof(info);
+    memcpy(buf + off, cache->descriptors, (size_t)cache->descriptors_len);
+    off += cache->descriptors_len;
+    for (int i = 0; i < cache->if_count; ++i) {
+        ctmb_enum_iface_t ie;
+        memset(&ie, 0, sizeof(ie));
+        ie.interface_number = (uint8_t)cache->ifs[i].num;
+        ie.iface_class = (uint8_t)strtol(cache->ifs[i].cls, NULL, 16);
+        ie.report_desc_len = (uint16_t)cache->ifs[i].rdesc_len;
+        memcpy(buf + off, &ie, sizeof(ie)); off += (int)sizeof(ie);
+        memcpy(buf + off, cache->ifs[i].rdesc, (size_t)cache->ifs[i].rdesc_len);
+        off += cache->ifs[i].rdesc_len;
+    }
+    *out_len = off;
+    return buf;
 }
 
 void enumerate_devices(scan_result_t *result)
@@ -706,5 +1797,8 @@ void enumerate_devices(scan_result_t *result)
     for (int i = 0; i < result->count; ++i) {
         inspect_hidraw(&result->devices[i]);
     }
+
+    enrich_scan_usb_busids(result);
+    tag_xpad_flydigi_candidates(result);
 }
 

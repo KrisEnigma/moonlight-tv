@@ -11,10 +11,12 @@
 
 #include "ctm_controller.h"
 #include "ctm_hid.h"   /* read_report_descriptor, derive_report_lengths */
+#include "ctm_state.h" /* composite_usb_device_dir_by_busid */
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -23,12 +25,25 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
 #ifdef __linux__
 #include <linux/hidraw.h>
 #include <linux/input.h>
+#ifndef BTN_SOUTH
+#define BTN_SOUTH 0x130
+#define BTN_EAST  0x131
+#define BTN_NORTH 0x133
+#define BTN_WEST  0x134
+#endif
+#ifndef BTN_DPAD_UP
+#define BTN_DPAD_UP    0x220
+#define BTN_DPAD_DOWN  0x221
+#define BTN_DPAD_LEFT  0x222
+#define BTN_DPAD_RIGHT 0x223
+#endif
 #endif
 
 #ifndef HIDIOCGRAWINFO
@@ -47,12 +62,20 @@ struct hidraw_devinfo { unsigned int bustype; short vendor; short product; };
 #ifndef EVIOCGRAB
 #define EVIOCGRAB _IOW('E', 0x90, int)
 #endif
+#ifndef ABS_HAT0X
+#define ABS_HAT0X 0x10
+#define ABS_HAT0Y 0x11
+#endif
+#ifndef FF_RUMBLE
+#define FF_RUMBLE 0x50
+#endif
 
 #define MAX_REPORT 4096
 #define MAX_REPORT_DESCRIPTOR 4096
 #define PACED_QUEUE_CAP 32
 #define MAX_EVDEV_GRABS 16
 #define BUS_BLUETOOTH 0x05
+#define BUS_USB 0x03
 
 typedef struct { uint8_t data[MAX_REPORT]; size_t len; } queued_report_t;
 typedef struct { int fd; char path[64]; } evdev_grab_t;
@@ -115,6 +138,14 @@ struct ctm_controller {
     uint8_t primary_out_ep;          /* the primary hidraw's OUT endpoint (output route) */
     uint8_t primary_iface;           /* the primary hidraw's USB interface number */
     volatile int comp_run;           /* gates the sibling reader threads */
+    int evdev_gamepad_fd;            /* Flydigi XInput: xpad evdev feeder */
+    pthread_t evdev_gamepad_thread;
+    int evdev_gamepad_started;
+    uint8_t xpad_in_ep;              /* IN endpoint of the xpad-claimed iface */
+    uint8_t xpad_out_ep;             /* OUT endpoint of the xpad-claimed iface */
+    int xpad_ff_effect_id;           /* evdev FF_RUMBLE effect slot */
+    int flydigi_xinput_evdev_only;   /* gamepad via evdev only (no hidraw on bus) */
+    int dummy_hid_pipe_wr;           /* write end of placeholder hid pipe */
 };
 
 /* ENet is process-global; init once for all controllers, never deinit. */
@@ -184,24 +215,6 @@ static int c_recv(ctm_controller_t *c, ctmb_header_t *h, uint8_t **payload)
     return ctm_transport_recv_msg(&c->xport, h, payload);
 }
 
-/* Read a sysfs text attribute, trimmed. When: evdev-grab vid/pid matching. */
-static int read_text_file(const char *path, char *out, size_t out_len)
-{
-    if (!out || out_len == 0) return -1;
-    out[0] = '\0';
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return -1;
-    ssize_t n = read(fd, out, out_len - 1);
-    close(fd);
-    if (n <= 0) return -1;
-    out[n] = '\0';
-    while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r' ||
-                     out[n - 1] == ' ' || out[n - 1] == '\t')) {
-        out[--n] = '\0';
-    }
-    return 0;
-}
-
 /* Compare a hex-string sysfs attr to a numeric vid/pid. When: evdev matching. */
 static int hex_equals(const char *text, unsigned int value)
 {
@@ -249,6 +262,9 @@ void ctm_bt_sign_output(uint8_t *data, size_t len)
     data[len - 1] = (uint8_t)((crc >> 24) & 0xffu);
 }
 
+static void flydigi_fill_caps_identity(const char *usb_busid, char *mfg, size_t mfg_len,
+                                       char *product, size_t product_len);
+
 /* Open the controller's hidraw node (ops->select_node or dev.path), validate
  * vid/pid, fill caps + report descriptor. When: once by session_main before
  * the connect loop. Returns the fd, or -1. */
@@ -272,7 +288,8 @@ static int open_hid(ctm_controller_t *c, ctmb_device_caps_t *caps,
     }
     unsigned int vid = (unsigned short)info.vendor;
     unsigned int pid = (unsigned short)info.product;
-    if ((c->vid_num && vid != c->vid_num) || (c->pid_num && pid != c->pid_num)) {
+    if (!(c->ops && c->ops->composite) &&
+        ((c->vid_num && vid != c->vid_num) || (c->pid_num && pid != c->pid_num))) {
         close(fd);
         return -1;
     }
@@ -292,6 +309,13 @@ static int open_hid(ctm_controller_t *c, ctmb_device_caps_t *caps,
         caps->product[0] == '\0') {
         snprintf(caps->product, sizeof(caps->product), "hidraw");
     }
+    if (c->ops && c->ops->composite && strcmp(c->ops->kind, "flydigi") == 0 &&
+        c->dev.usb_busid[0]) {
+        flydigi_fill_caps_identity(c->dev.usb_busid, caps->manufacturer, sizeof(caps->manufacturer),
+                                     caps->product, sizeof(caps->product));
+        if (c->vid_num) caps->vendor_id = (uint16_t)c->vid_num;
+        if (c->pid_num) caps->product_id = (uint16_t)c->pid_num;
+    }
 
     *report_desc_len = read_report_descriptor(fd, report_desc, MAX_REPORT_DESCRIPTOR);
     if (*report_desc_len) {
@@ -301,6 +325,163 @@ static int open_hid(ctm_controller_t *c, ctmb_device_caps_t *caps,
     }
 
     if (c->ops->request_bt_mode) request_full_bt_mode(fd);
+    return fd;
+}
+
+static int open_xpad_evdev_for_busid(const char *usb_busid, char *path_out, size_t path_len);
+
+static void flydigi_fill_caps_identity(const char *usb_busid, char *mfg, size_t mfg_len,
+                                       char *product, size_t product_len)
+{
+    char sysfs_mfg[64] = {0};
+    char sysfs_prod[64] = {0};
+    if (usb_busid && usb_busid[0] &&
+        read_usb_identity_attrs(usb_busid, sysfs_mfg, sizeof(sysfs_mfg),
+                                sysfs_prod, sizeof(sysfs_prod)) == 0) {
+        if (sysfs_mfg[0] && mfg && mfg_len) {
+            snprintf(mfg, mfg_len, "%s", sysfs_mfg);
+        }
+        if (sysfs_prod[0] && product && product_len) {
+            if (contains_ci(sysfs_prod, "apex")) {
+                snprintf(product, product_len, "Apex 4");
+            } else if (contains_ci(sysfs_prod, "vader")) {
+                snprintf(product, product_len, "Vader3");
+            } else {
+                snprintf(product, product_len, "%s", sysfs_prod);
+            }
+            return;
+        }
+    }
+    if (mfg && mfg_len && !mfg[0]) {
+        snprintf(mfg, mfg_len, "Flydigi");
+    }
+    if (product && product_len && !product[0]) {
+        snprintf(product, product_len, "Apex 4");
+    }
+}
+
+/* Flydigi XInput with no hidraw on the USB bus: caps + synthetic descriptor,
+ * placeholder pipe for the input thread; gamepad input comes from xpad evdev. */
+static int flydigi_open_xinput_evdev_only(ctm_controller_t *c, ctmb_device_caps_t *caps,
+                                          uint8_t *report_desc, uint32_t *report_desc_len)
+{
+    if (!c || !caps || !report_desc || !report_desc_len) {
+        return -1;
+    }
+    if (!flydigi_is_xinput_evdev_only_for_busid(c->dev.usb_busid)) {
+        return -1;
+    }
+
+    char evdev_path[64];
+    if (open_xpad_evdev_for_busid(c->dev.usb_busid, evdev_path, sizeof(evdev_path)) != 0) {
+        ctl_log(c, "flydigi xinput evdev-only: xpad path missing busid=%s", c->dev.usb_busid);
+        return -1;
+    }
+
+    memset(caps, 0, sizeof(*caps));
+    caps->bus = BUS_USB;
+    caps->input_report_len = 64;
+    caps->output_report_len = 64;
+    caps->feature_report_len = 64;
+    caps->flags = 1;
+    snprintf(caps->serial, sizeof(caps->serial), "%s", c->dev.mac);
+    snprintf(caps->path, sizeof(caps->path), "%s", evdev_path);
+
+    char usbdir[512];
+    if (composite_usb_device_dir_by_busid(c->dev.usb_busid, usbdir, sizeof(usbdir)) == 0) {
+        char path[600], v[16] = {0}, p[16] = {0};
+        snprintf(path, sizeof(path), "%s/idVendor", usbdir);
+        read_text_file(path, v, sizeof(v));
+        snprintf(path, sizeof(path), "%s/idProduct", usbdir);
+        read_text_file(path, p, sizeof(p));
+        if (v[0]) {
+            caps->vendor_id = (uint16_t)strtoul(v, NULL, 16);
+        }
+        if (p[0]) {
+            caps->product_id = (uint16_t)strtoul(p, NULL, 16);
+        }
+    }
+    if (!caps->vendor_id) {
+        caps->vendor_id = (uint16_t)0x045e;
+    }
+    if (!caps->product_id) {
+        caps->product_id = (uint16_t)0x028e;
+    }
+
+    flydigi_fill_caps_identity(c->dev.usb_busid, caps->manufacturer, sizeof(caps->manufacturer),
+                                 caps->product, sizeof(caps->product));
+
+    if (flydigi_xbox360_wired_rdesc_len > MAX_REPORT_DESCRIPTOR) {
+        return -1;
+    }
+    memcpy(report_desc, flydigi_xbox360_wired_rdesc, flydigi_xbox360_wired_rdesc_len);
+    *report_desc_len = (uint32_t)flydigi_xbox360_wired_rdesc_len;
+    derive_report_lengths(report_desc, *report_desc_len, caps);
+    if (caps->input_report_len < 64) {
+        caps->input_report_len = 64;
+    }
+    if (caps->output_report_len < 64) {
+        caps->output_report_len = 64;
+    }
+
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        ctl_log(c, "flydigi xinput evdev-only: pipe failed errno=%d", errno);
+        return -1;
+    }
+    (void)fcntl(pipefd[0], F_SETFL, fcntl(pipefd[0], F_GETFL, 0) | O_NONBLOCK);
+    (void)fcntl(pipefd[1], F_SETFL, fcntl(pipefd[1], F_GETFL, 0) | O_NONBLOCK);
+    c->flydigi_xinput_evdev_only = 1;
+    c->dummy_hid_pipe_wr = pipefd[1];
+    ctl_log(c, "flydigi xinput evdev-only session busid=%s evdev=%s caps=%04x:%04x",
+            c->dev.usb_busid, evdev_path, caps->vendor_id, caps->product_id);
+    return pipefd[0];
+}
+
+/* Flydigi dongle in XInput mode with hidraw siblings: open a non-mouse hidraw
+ * hidraw for the input thread and supply synthetic Xbox 360 wired caps/descriptor
+ * for HELLO (identity still comes from sysfs). */
+static int flydigi_open_xinput_handshake(ctm_controller_t *c, ctmb_device_caps_t *caps,
+                                         uint8_t *report_desc, uint32_t *report_desc_len)
+{
+    if (!c || !caps || !report_desc || !report_desc_len) return -1;
+    if (!flydigi_is_xinput_mode_for_busid(c->dev.usb_busid)) return -1;
+
+    memset(caps, 0, sizeof(*caps));
+    caps->vendor_id = c->vid_num ? (uint16_t)c->vid_num : (uint16_t)0x04b4;
+    caps->product_id = c->pid_num ? (uint16_t)c->pid_num : (uint16_t)0x2412;
+    caps->bus = BUS_USB;
+    caps->input_report_len = 64;
+    caps->output_report_len = 64;
+    caps->feature_report_len = 64;
+    caps->flags = 1;
+    snprintf(caps->serial, sizeof(caps->serial), "%s", c->dev.mac);
+
+    flydigi_fill_caps_identity(c->dev.usb_busid, caps->manufacturer, sizeof(caps->manufacturer),
+                                 caps->product, sizeof(caps->product));
+
+    if (flydigi_xbox360_wired_rdesc_len > MAX_REPORT_DESCRIPTOR) return -1;
+    memcpy(report_desc, flydigi_xbox360_wired_rdesc, flydigi_xbox360_wired_rdesc_len);
+    *report_desc_len = (uint32_t)flydigi_xbox360_wired_rdesc_len;
+    derive_report_lengths(report_desc, *report_desc_len, caps);
+    if (caps->input_report_len < 64) caps->input_report_len = 64;
+    if (caps->output_report_len < 64) caps->output_report_len = 64;
+
+    char node[64] = {0};
+    if (flydigi_handshake_hidraw_path_for_busid(c->dev.usb_busid, node, sizeof(node)) != 0 &&
+        flydigi_hidraw_path_for_busid(c->dev.usb_busid, node, sizeof(node)) != 0) {
+        ctl_log(c, "flydigi xinput mode: no hidraw for handshake (synthetic caps only)");
+        return -1;
+    }
+
+    int fd = open(node, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        ctl_log(c, "flydigi xinput handshake open failed path=%s errno=%d", node, errno);
+        return -1;
+    }
+    snprintf(caps->path, sizeof(caps->path), "%s", node);
+    ctl_log(c, "flydigi xinput mode: handshake via sysfs, gamepad via xpad evdev path=%s",
+            node);
     return fd;
 }
 
@@ -538,6 +719,17 @@ static int find_hidraw_under(const char *ifdir, char *out, size_t outlen)
     return rc;
 }
 
+/* Resolve the USB device sysfs dir for composite sibling open. Prefer the
+ * stable bus id (Flydigi dongle) over VID/PID scan (ambiguous with duplicates). */
+static int resolve_usbdir_for_controller(ctm_controller_t *c, char *out, size_t out_len)
+{
+    if (c && c->dev.usb_busid[0] &&
+        composite_usb_device_dir_by_busid(c->dev.usb_busid, out, out_len) == 0) {
+        return 0;
+    }
+    return resolve_usb_device_dir(c->vid_num, c->pid_num, out, out_len);
+}
+
 /* Open every class-03 HID interface of the puck's USB device R/W (the siblings),
  * and record the primary's (c->dev.path) endpoints + interface number -- all via
  * the reliable /sys/class/input resolution (no flaky /sys/class/hidraw realpath).
@@ -545,10 +737,13 @@ static int find_hidraw_under(const char *ifdir, char *out, size_t outlen)
  * When: run_session start, for composite controllers (the puck). */
 static void open_composite_siblings(ctm_controller_t *c)
 {
+    if (c && c->flydigi_xinput_evdev_only) {
+        return;
+    }
     char usbdir[512];
-    if (resolve_usb_device_dir(c->vid_num, c->pid_num, usbdir, sizeof(usbdir)) != 0) {
-        ctl_log(c, "composite: USB device dir unresolved vid=%04x pid=%04x",
-                c->vid_num, c->pid_num);
+    if (resolve_usbdir_for_controller(c, usbdir, sizeof(usbdir)) != 0) {
+        ctl_log(c, "composite: USB device dir unresolved vid=%04x pid=%04x busid=%s",
+                c->vid_num, c->pid_num, c->dev.usb_busid[0] ? c->dev.usb_busid : "-");
         return;
     }
     const char *base = strrchr(usbdir, '/'); base = base ? base + 1 : usbdir;
@@ -584,6 +779,370 @@ static void open_composite_siblings(ctm_controller_t *c)
                 hidpath, iface, in_ep, out_ep);
     }
     closedir(d);
+}
+
+typedef struct {
+    uint16_t buttons;
+    int8_t hat_x;
+    int8_t hat_y;
+    uint8_t lt;
+    uint8_t rt;
+    int16_t lx;
+    int16_t ly;
+    int16_t rx;
+    int16_t ry;
+} xpad_evdev_state_t;
+
+static void xpad_sync_hat_buttons(xpad_evdev_state_t *st)
+{
+    st->buttons &= (uint16_t)~0x000fu;
+    if (st->hat_x < 0) st->buttons |= 0x0004u;
+    else if (st->hat_x > 0) st->buttons |= 0x0008u;
+    if (st->hat_y < 0) st->buttons |= 0x0001u;
+    else if (st->hat_y > 0) st->buttons |= 0x0002u;
+}
+
+static void xpad_apply_hat(xpad_evdev_state_t *st, uint16_t code, int value)
+{
+    if (code == ABS_HAT0X) {
+        st->hat_x = (int8_t)value;
+    } else if (code == ABS_HAT0Y) {
+        st->hat_y = (int8_t)value;
+    } else {
+        return;
+    }
+    xpad_sync_hat_buttons(st);
+}
+
+static void xpad_map_button(xpad_evdev_state_t *st, uint16_t code, int value)
+{
+    uint16_t mask = 0;
+    switch (code) {
+    case BTN_SOUTH: mask = 0x1000; break;
+    case BTN_EAST: mask = 0x2000; break;
+    case BTN_WEST: mask = 0x8000; break;
+    case BTN_NORTH: mask = 0x4000; break;
+    case BTN_TL: mask = 0x0100; break;
+    case BTN_TR: mask = 0x0200; break;
+    case BTN_SELECT: mask = 0x0020; break;
+    case BTN_START: mask = 0x0010; break;
+    case BTN_MODE: mask = 0x0400; break;
+    case BTN_THUMBL: mask = 0x0040; break;
+    case BTN_THUMBR: mask = 0x0080; break;
+    default:
+        if (code >= BTN_DPAD_UP && code <= BTN_DPAD_RIGHT) {
+            static const uint16_t dpad_map[] = {0x0001, 0x0002, 0x0004, 0x0008};
+            st->hat_x = 0;
+            st->hat_y = 0;
+            st->buttons &= (uint16_t)~0x000fu;
+            if (value) st->buttons |= dpad_map[code - BTN_DPAD_UP];
+            return;
+        }
+        break;
+    }
+    if (!mask) return;
+    if (value) st->buttons |= mask;
+    else st->buttons &= (uint16_t)~mask;
+}
+
+static void xpad_build_hid_report(const xpad_evdev_state_t *st, uint8_t *buf)
+{
+    memset(buf, 0, 20);
+    buf[0] = 0x00;
+    buf[1] = 0x14;
+    buf[2] = (uint8_t)(st->buttons & 0xffu);
+    buf[3] = (uint8_t)((st->buttons >> 8) & 0xffu);
+    buf[4] = st->lt;
+    buf[5] = st->rt;
+    buf[6] = (uint8_t)(st->lx & 0xff);
+    buf[7] = (uint8_t)((st->lx >> 8) & 0xff);
+    buf[8] = (uint8_t)(st->ly & 0xff);
+    buf[9] = (uint8_t)((st->ly >> 8) & 0xff);
+    buf[10] = (uint8_t)(st->rx & 0xff);
+    buf[11] = (uint8_t)((st->rx >> 8) & 0xff);
+    buf[12] = (uint8_t)(st->ry & 0xff);
+    buf[13] = (uint8_t)((st->ry >> 8) & 0xff);
+}
+
+static bool iface_is_xpad_gamepad_ff(const char *ifdir)
+{
+    char cls[8] = {0}, sub[8] = {0}, proto[8] = {0};
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/bInterfaceClass", ifdir);
+    read_text_file(path, cls, sizeof(cls));
+    snprintf(path, sizeof(path), "%s/bInterfaceSubClass", ifdir);
+    read_text_file(path, sub, sizeof(sub));
+    snprintf(path, sizeof(path), "%s/bInterfaceProtocol", ifdir);
+    read_text_file(path, proto, sizeof(proto));
+    return strcmp(cls, "ff") == 0 && strcmp(sub, "5d") == 0 && strtoul(proto, NULL, 16) == 0x01u;
+}
+
+static int find_xpad_iface_endpoints(ctm_controller_t *c, uint8_t *in_ep, uint8_t *out_ep)
+{
+    if (in_ep) *in_ep = 0;
+    if (out_ep) *out_ep = 0;
+    char usbdir[512];
+    if (resolve_usbdir_for_controller(c, usbdir, sizeof(usbdir)) != 0) return -1;
+    const char *base = strrchr(usbdir, '/');
+    base = base ? base + 1 : usbdir;
+    size_t blen = strlen(base);
+    DIR *d = opendir(usbdir);
+    if (!d) return -1;
+    struct dirent *e;
+    int rc = -1;
+    uint8_t fallback_in = 0;
+    uint8_t fallback_out = 0;
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, base, blen) != 0 || e->d_name[blen] != ':') continue;
+        char ifdir[1024], clsf[1100], cls[8] = {0};
+        snprintf(ifdir, sizeof(ifdir), "%s/%s", usbdir, e->d_name);
+        snprintf(clsf, sizeof(clsf), "%s/bInterfaceClass", ifdir);
+        if (read_text_file(clsf, cls, sizeof(cls)) != 0) {
+            continue;
+        }
+        const bool is_hid = strcmp(cls, "03") == 0;
+        const bool is_xpad_ff = iface_is_xpad_gamepad_ff(ifdir);
+        if (!is_hid && !is_xpad_ff) {
+            continue;
+        }
+        char hidpath[64];
+        if (is_hid && find_hidraw_under(ifdir, hidpath, sizeof(hidpath)) == 0) {
+            continue;
+        }
+        uint8_t in = 0, out = 0;
+        iface_endpoints(ifdir, &in, &out);
+        if (in == 0) {
+            continue;
+        }
+        if (is_xpad_ff) {
+            if (in_ep) *in_ep = in;
+            if (out_ep) *out_ep = out;
+            rc = 0;
+            break;
+        }
+        if (fallback_in == 0) {
+            fallback_in = in;
+            fallback_out = out;
+        }
+    }
+    closedir(d);
+    if (rc != 0 && fallback_in != 0) {
+        if (in_ep) *in_ep = fallback_in;
+        if (out_ep) *out_ep = fallback_out;
+        rc = 0;
+    }
+    return rc;
+}
+
+static int find_xpad_iface_endpoint(ctm_controller_t *c, uint8_t *in_ep)
+{
+    return find_xpad_iface_endpoints(c, in_ep, NULL);
+}
+
+static void xpad_stop_rumble(ctm_controller_t *c)
+{
+    if (!c || c->evdev_gamepad_fd < 0 || c->xpad_ff_effect_id < 0) {
+        return;
+    }
+    struct input_event play;
+    memset(&play, 0, sizeof(play));
+    play.type = EV_FF;
+    play.code = (uint16_t)c->xpad_ff_effect_id;
+    play.value = 0;
+    (void)write(c->evdev_gamepad_fd, &play, sizeof(play));
+}
+
+static void xpad_apply_rumble(ctm_controller_t *c, const uint8_t *payload, size_t len)
+{
+    if (!c || c->evdev_gamepad_fd < 0 || !payload || len < 3) {
+        return;
+    }
+    uint8_t weak = 0;
+    uint8_t strong = 0;
+    if (len >= 8 && payload[0] == 0x00 && payload[1] == 0x08) {
+        weak = payload[2];
+        strong = payload[3];
+    } else if (len >= 4) {
+        weak = payload[2];
+        strong = payload[3];
+    } else {
+        weak = payload[1];
+        strong = payload[2];
+    }
+
+    struct ff_effect eff;
+    memset(&eff, 0, sizeof(eff));
+    eff.type = FF_RUMBLE;
+    eff.id = c->xpad_ff_effect_id;
+    eff.u.rumble.weak_magnitude = (uint16_t)((unsigned)weak * 0xffffu / 255u);
+    eff.u.rumble.strong_magnitude = (uint16_t)((unsigned)strong * 0xffffu / 255u);
+    if (ioctl(c->evdev_gamepad_fd, EVIOCSFF, &eff) < 0) {
+        return;
+    }
+    if (c->xpad_ff_effect_id < 0) {
+        c->xpad_ff_effect_id = eff.id;
+    }
+
+    struct input_event play;
+    memset(&play, 0, sizeof(play));
+    gettimeofday(&play.time, NULL);
+    play.type = EV_FF;
+    play.code = (uint16_t)eff.id;
+    play.value = (weak || strong) ? 1 : 0;
+    (void)write(c->evdev_gamepad_fd, &play, sizeof(play));
+}
+
+static int open_xpad_evdev_for_busid(const char *usb_busid, char *path_out, size_t path_len)
+{
+    if (!usb_busid || !usb_busid[0] || !path_out || path_len == 0) return -1;
+    DIR *d = opendir("/sys/class/input");
+    if (!d) return -1;
+    struct dirent *ent;
+    int rc = -1;
+    while ((ent = readdir(d)) != NULL) {
+        if (strncmp(ent->d_name, "input", 5) != 0) continue;
+        char input_path[PATH_MAX], busid[64] = {0};
+        snprintf(input_path, sizeof(input_path), "/sys/class/input/%s", ent->d_name);
+        usb_busid_from_input_path(input_path, busid, sizeof(busid));
+        if (strcmp(busid, usb_busid) != 0) continue;
+
+        char vendor[16] = {0}, product[16] = {0}, name[128] = {0};
+        char attr[PATH_MAX];
+        snprintf(attr, sizeof(attr), "%s/id/vendor", input_path);
+        read_text_file(attr, vendor, sizeof(vendor));
+        snprintf(attr, sizeof(attr), "%s/id/product", input_path);
+        read_text_file(attr, product, sizeof(product));
+        snprintf(attr, sizeof(attr), "%s/name", input_path);
+        read_text_file(attr, name, sizeof(name));
+        if (!hex_equals(vendor, 0x045e) || !hex_equals(product, 0x028e)) {
+            if (!contains_ci(name, "x-box") && !contains_ci(name, "xbox")) continue;
+        }
+
+        DIR *input = opendir(input_path);
+        if (!input) continue;
+        struct dirent *child;
+        while ((child = readdir(input)) != NULL) {
+            if (strncmp(child->d_name, "event", 5) != 0) continue;
+            snprintf(path_out, path_len, "/dev/input/%s", child->d_name);
+            rc = 0;
+            break;
+        }
+        closedir(input);
+        if (rc == 0) break;
+    }
+    closedir(d);
+    return rc;
+}
+
+static void xpad_send_report(ctm_controller_t *c, const xpad_evdev_state_t *st)
+{
+    if (!c || c->xpad_in_ep == 0) return;
+    uint8_t buf[20];
+    xpad_build_hid_report(st, buf);
+    if (c_send(c, CTMB_MSG_INPUT_REPORT, CTMB_FLAG_OK, c->xpad_in_ep, buf, sizeof(buf)) == 0) {
+        c->st_reports_in++;
+    }
+}
+
+static void *evdev_gamepad_thread_main(void *arg)
+{
+    ctm_controller_t *c = (ctm_controller_t *)arg;
+    xpad_evdev_state_t st;
+    memset(&st, 0, sizeof(st));
+    xpad_send_report(c, &st);
+
+    while (!c->stop && c->evdev_gamepad_fd >= 0) {
+        struct pollfd pfd;
+        pfd.fd = c->evdev_gamepad_fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        int pr = poll(&pfd, 1, 50);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (pr == 0) continue;
+        if (!(pfd.revents & POLLIN)) continue;
+        for (;;) {
+            struct input_event ev;
+            ssize_t n = read(c->evdev_gamepad_fd, &ev, sizeof(ev));
+            if (n != (ssize_t)sizeof(ev)) break;
+            if (ev.type == EV_KEY) {
+                xpad_map_button(&st, ev.code, ev.value);
+                xpad_send_report(c, &st);
+            } else if (ev.type == EV_ABS) {
+                switch (ev.code) {
+                case ABS_X: st.lx = (int16_t)ev.value; break;
+                case ABS_Y: st.ly = (int16_t)(-(int)ev.value); break;
+                case ABS_RX: st.rx = (int16_t)ev.value; break;
+                case ABS_RY: st.ry = (int16_t)(-(int)ev.value); break;
+                case ABS_Z: st.lt = (uint8_t)(ev.value > 255 ? ev.value >> 7 : ev.value); break;
+                case ABS_RZ: st.rt = (uint8_t)(ev.value > 255 ? ev.value >> 7 : ev.value); break;
+                case ABS_HAT0X:
+                case ABS_HAT0Y:
+                    xpad_apply_hat(&st, ev.code, ev.value);
+                    break;
+                default: continue;
+                }
+                xpad_send_report(c, &st);
+            }
+        }
+    }
+    return NULL;
+}
+
+static int start_evdev_gamepad_feeder(ctm_controller_t *c)
+{
+    if (!c || !(c->ops && c->ops->composite_evdev_gamepad) || !c->dev.usb_busid[0]) {
+        return -1;
+    }
+    if (find_xpad_iface_endpoints(c, &c->xpad_in_ep, &c->xpad_out_ep) != 0 || c->xpad_in_ep == 0) {
+        ctl_log(c, "xpad interface endpoint not found busid=%s", c->dev.usb_busid);
+        return -1;
+    }
+
+    char evdev_path[64];
+    if (open_xpad_evdev_for_busid(c->dev.usb_busid, evdev_path, sizeof(evdev_path)) != 0) {
+        ctl_log(c, "xpad evdev not found busid=%s", c->dev.usb_busid);
+        return -1;
+    }
+
+    int fd = open(evdev_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        ctl_log(c, "xpad evdev open failed path=%s errno=%d", evdev_path, errno);
+        return -1;
+    }
+    if (ioctl(fd, EVIOCGRAB, 1) < 0) {
+        ctl_log(c, "xpad evdev grab failed path=%s errno=%d (continuing)", evdev_path, errno);
+    }
+    c->xpad_ff_effect_id = -1;
+    c->evdev_gamepad_fd = fd;
+    if (pthread_create(&c->evdev_gamepad_thread, NULL, evdev_gamepad_thread_main, c) == 0) {
+        c->evdev_gamepad_started = 1;
+        ctl_log(c, "xpad evdev feeder started path=%s in_ep=0x%02x out_ep=0x%02x",
+                evdev_path, c->xpad_in_ep, c->xpad_out_ep);
+        return 0;
+    }
+    ioctl(fd, EVIOCGRAB, 0);
+    close(fd);
+    c->evdev_gamepad_fd = -1;
+    return -1;
+}
+
+static void stop_evdev_gamepad_feeder(ctm_controller_t *c)
+{
+    if (!c) return;
+    if (c->evdev_gamepad_started) {
+        pthread_join(c->evdev_gamepad_thread, NULL);
+        c->evdev_gamepad_started = 0;
+    }
+    if (c->evdev_gamepad_fd >= 0) {
+        xpad_stop_rumble(c);
+        ioctl(c->evdev_gamepad_fd, EVIOCGRAB, 0);
+        close(c->evdev_gamepad_fd);
+        c->evdev_gamepad_fd = -1;
+        c->xpad_ff_effect_id = -1;
+    }
 }
 
 /* Sibling reader: poll one interface's hidraw, forward input tagged with its IN
@@ -688,6 +1247,14 @@ static void handle_message(ctm_controller_t *c, ctmb_host_config_t *host_cfg,
                            const ctmb_header_t *h, uint8_t *payload)
 {
     if (h->type == CTMB_MSG_OUTPUT_REPORT) {
+        if (c->ops && c->ops->composite_evdev_gamepad && c->evdev_gamepad_fd >= 0) {
+            uint8_t ep = (uint8_t)h->request_id;
+            if (ep == 0 || ep == c->xpad_out_ep || ep == c->primary_out_ep) {
+                xpad_apply_rumble(c, payload, h->payload_len);
+                c->st_reports_out++;
+                return;
+            }
+        }
         if (c->ops && c->ops->composite) {
             /* Route the host's OUT write to the interface that owns the OUT
              * endpoint it addressed (request_id = endpoint). Verbatim; pacing is
@@ -804,10 +1371,22 @@ static void run_session(ctm_controller_t *c, const ctmb_device_caps_t *caps,
 
     /* Composite: open siblings + resolve the primary endpoints BEFORE the input
      * thread starts (it tags primary input with c->primary_in_ep). */
-    if (c->ops->composite) open_composite_siblings(c);
+    if (c->ops->composite) {
+        open_composite_siblings(c);
+    }
+    if (c->ops->composite_evdev_gamepad) {
+        if (start_evdev_gamepad_feeder(c) != 0 &&
+            c->ops->kind && strcmp(c->ops->kind, "flydigi") == 0 &&
+            (flydigi_is_xinput_evdev_only_for_busid(c->dev.usb_busid) ||
+             flydigi_is_xinput_mode_for_busid(c->dev.usb_busid))) {
+            ctl_log(c, "xpad evdev feeder failed; aborting xinput session");
+            return;
+        }
+    }
 
-    c->input_thread_started = 0;
-    if (pthread_create(&c->input_thread, NULL, input_thread_main, c) == 0) {
+    if (c->flydigi_xinput_evdev_only) {
+        c->input_thread_started = 0;
+    } else if (pthread_create(&c->input_thread, NULL, input_thread_main, c) == 0) {
         c->input_thread_started = 1;
     } else {
         ctl_log(c, "input thread failed errno=%d", errno);
@@ -817,7 +1396,7 @@ static void run_session(ctm_controller_t *c, const ctmb_device_caps_t *caps,
         return;
     }
     c->comp_run = 1;
-    if (c->ops->composite) {
+    if (c->ops->composite && !c->flydigi_xinput_evdev_only) {
         for (int i = 0; i < c->comp_count; ++i) {
             if (pthread_create(&c->comp[i].thread, NULL, composite_reader_main, &c->comp[i]) == 0)
                 c->comp[i].started = 1;
@@ -885,6 +1464,7 @@ static void run_session(ctm_controller_t *c, const ctmb_device_caps_t *caps,
 
     c->comp_run = 0;
     if (c->wake_pipe[1] >= 0) (void)write(c->wake_pipe[1], "x", 1);
+    stop_evdev_gamepad_feeder(c);
     if (c->input_thread_started) {
         pthread_join(c->input_thread, NULL);
         c->input_thread_started = 0;
@@ -907,6 +1487,13 @@ static void *session_main(void *arg)
     uint32_t report_desc_len = 0;
 
     c->hid_fd = open_hid(c, &caps, report_desc, &report_desc_len);
+    if (c->hid_fd < 0 && c->ops && strcmp(c->ops->kind, "flydigi") == 0 &&
+        flydigi_is_xinput_evdev_only_for_busid(c->dev.usb_busid)) {
+        c->hid_fd = flydigi_open_xinput_evdev_only(c, &caps, report_desc, &report_desc_len);
+    }
+    if (c->hid_fd < 0 && c->ops && strcmp(c->ops->kind, "flydigi") == 0) {
+        c->hid_fd = flydigi_open_xinput_handshake(c, &caps, report_desc, &report_desc_len);
+    }
     if (c->hid_fd < 0) {
         ctl_log(c, "hid open failed path=%s errno=%d", c->dev.path, errno);
         c->stop = 1;
@@ -958,6 +1545,10 @@ ctm_controller_t *ctm_controller_create(const ctm_controller_dev_t *dev)
     c->hid_fd = -1;
     c->wake_pipe[0] = -1;
     c->wake_pipe[1] = -1;
+    c->evdev_gamepad_fd = -1;
+    c->xpad_ff_effect_id = -1;
+    c->flydigi_xinput_evdev_only = 0;
+    c->dummy_hid_pipe_wr = -1;
     for (int i = 0; i < MAX_EVDEV_GRABS; ++i) c->evdev_grabs[i].fd = -1;
     pthread_mutex_init(&c->hid_mutex, NULL);
     pthread_mutex_init(&c->settings_mutex, NULL);
@@ -1041,6 +1632,7 @@ void ctm_controller_plug_out(ctm_controller_t *c)
     ctm_transport_disconnect(&c->xport);
     ctm_transport_destroy(&c->xport);
     if (c->hid_fd >= 0) { close(c->hid_fd); c->hid_fd = -1; }
+    if (c->dummy_hid_pipe_wr >= 0) { close(c->dummy_hid_pipe_wr); c->dummy_hid_pipe_wr = -1; }
     if (c->wake_pipe[0] >= 0) { close(c->wake_pipe[0]); c->wake_pipe[0] = -1; }
     if (c->wake_pipe[1] >= 0) { close(c->wake_pipe[1]); c->wake_pipe[1] = -1; }
     if (c->enet) { enet_client_destroy(c->enet); c->enet = NULL; }
@@ -1098,6 +1690,7 @@ void ctm_controller_destroy(ctm_controller_t *c)
 /* --- factory: specific types first, generic last ------------------------- */
 
 static const ctm_controller_ops_t *const k_registry[] = {
+    &ctm_controller_flydigi_ops,
     &ctm_controller_steam_puck_ops,
     &ctm_controller_ds5_ops,
     &ctm_controller_ds4_ops,

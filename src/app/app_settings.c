@@ -75,8 +75,8 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     config->virtual_mouse = false;
     config->hdr = false;
     config->force_full_color_range = false;
-    config->video_tight_sync = false;
     config->hevc = true;
+    config->idr_refresh_interval_sec = 0;
     config->av1 = false;
     config->show_stats_on_start = false;
     config->show_stats_compact = false;
@@ -142,8 +142,8 @@ bool settings_save(app_settings_t *config) {
     ini_write_string(fp, "decoder", config->decoder);
     ini_write_bool(fp, "hdr", config->hdr);
     ini_write_bool(fp, "force_full_color_range", config->force_full_color_range);
-    ini_write_bool(fp, "tight_display_sync", config->video_tight_sync);
     ini_write_bool(fp, "hevc", config->hevc);
+    ini_write_int(fp, "idr_refresh_interval_sec", config->idr_refresh_interval_sec);
     ini_write_bool(fp, "av1", config->av1);
     ini_write_bool(fp, "show_stats_on_start", config->show_stats_on_start);
     ini_write_bool(fp, "show_stats_compact", config->show_stats_compact);
@@ -235,6 +235,15 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         set_int(&config->stream.packetSize, value);
     } else if (INI_FULL_MATCH("streaming", "rotate")) {
         set_int(&config->rotate, value);
+    } else if (INI_FULL_MATCH("video", "idr_refresh_interval_sec")) {
+        set_int(&config->idr_refresh_interval_sec, value);
+        if (config->idr_refresh_interval_sec < 0) {
+            config->idr_refresh_interval_sec = 0;
+        } else if (config->idr_refresh_interval_sec > 60) {
+            config->idr_refresh_interval_sec = 60;
+        } else if (config->idr_refresh_interval_sec == 1) {
+            config->idr_refresh_interval_sec = 2;
+        }
     } else if (INI_NAME_MATCH("hevc")) {
         config->hevc = INI_IS_TRUE(value);
     } else if (INI_FULL_MATCH("video", "av1")) {
@@ -249,8 +258,6 @@ static int settings_parse(app_settings_t *config, const char *section, const cha
         config->show_stats_compact = INI_IS_TRUE(value);
     } else if (INI_NAME_MATCH("hdr")) {
         config->hdr = INI_IS_TRUE(value);
-    } else if (INI_FULL_MATCH("video", "tight_display_sync")) {
-        config->video_tight_sync = INI_IS_TRUE(value);
     } else if (INI_FULL_MATCH("video", "client_refresh_rate_x100")) {
         set_int(&config->client_refresh_rate_x100, value);
         if (config->client_refresh_rate_x100 < 0) {

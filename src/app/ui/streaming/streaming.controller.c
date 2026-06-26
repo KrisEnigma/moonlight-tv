@@ -15,6 +15,7 @@
 #include "util/i18n.h"
 #include "logging.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static void exit_streaming(lv_event_t *event);
@@ -79,6 +80,60 @@ static const char *streaming_codec_display(const char *fmt) {
         return "AV1 10bit";
     }
     return fmt;
+}
+
+/** Compact codec label matching Moonlight Qt (e.g. "AV1 10-bit", "H.265"). */
+static const char *streaming_codec_compact_text(const char *fmt) {
+    if (fmt == NULL || fmt[0] == '\0') {
+        return "-";
+    }
+    if (strcmp(fmt, "H264") == 0) {
+        return "H.264";
+    }
+    if (strcmp(fmt, "H265") == 0) {
+        return "H.265";
+    }
+    if (strcmp(fmt, "H265 10bit") == 0) {
+        return "H.265 10-bit";
+    }
+    if (strcmp(fmt, "AV1 8bit") == 0) {
+        return "AV1";
+    }
+    if (strcmp(fmt, "AV1 10bit") == 0) {
+        return "AV1 10-bit";
+    }
+    return fmt;
+}
+
+/** Format target stream FPS for compact stats (e.g. "120" or "119.88"). */
+static void streaming_target_fps_text(char *buf, size_t buflen) {
+    if (app_configuration->client_refresh_rate_x100 > 0) {
+        int x100 = app_configuration->client_refresh_rate_x100;
+        if (x100 % 100 == 0) {
+            snprintf(buf, buflen, "%d", x100 / 100);
+        } else {
+            snprintf(buf, buflen, "%.2f", x100 / 100.0);
+        }
+    } else {
+        snprintf(buf, buflen, "%d", app_configuration->stream.fps);
+    }
+}
+
+static float streaming_render_fps(float decodedFps) {
+    float renderFps = decodedFps;
+#if defined(TARGET_WEBOS)
+    int displayRate = 60;
+    if (SDL_webOSGetRefreshRate(&displayRate) && displayRate > 0 && renderFps > (float) displayRate) {
+        renderFps = (float) displayRate;
+    }
+#else
+    SDL_DisplayMode mode;
+    if (SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.refresh_rate > 0
+        && renderFps > (float) mode.refresh_rate) {
+        renderFps = (float) mode.refresh_rate;
+    }
+#endif
+    return renderFps;
 }
 
 static void network_test_timer_cb(lv_timer_t *timer) {
@@ -183,49 +238,66 @@ bool streaming_refresh_stats() {
     const struct VIDEO_INFO *info = &vdec_stream_info;
 
     if (controller->stats_compact_label != NULL) {
-        /* Format: 3840×2160 HDR H.265 10bit FPS 120 N 1/3ms H 4ms D 8ms TL 13ms FD 0.00% 45.0 Mbps */
-        float renderFps = dst->decodedFps;
-        int displayRate = 60;
-#if defined(TARGET_WEBOS)
-        if (SDL_webOSGetRefreshRate(&displayRate) && displayRate > 0 && renderFps > (float) displayRate) {
-            renderFps = (float) displayRate;
-        }
-#else
-        SDL_DisplayMode mode;
-        if (SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.refresh_rate > 0) {
-            displayRate = mode.refresh_rate;
-            if (renderFps > (float) displayRate) {
-                renderFps = (float) displayRate;
-            }
-        }
-#endif
-        float netMs = (float) dst->rtt;
+        char stats_line[384];
+        char fps_text[16];
+        streaming_target_fps_text(fps_text, sizeof(fps_text));
+
+        const char *codec = streaming_codec_compact_text(vdec_stream_info.format);
+        const char *hdr_suffix = app_configuration->hdr ? " HDR" : "";
+        int w = info->width > 0 ? info->width : 0;
+        int h = info->height > 0 ? info->height : 0;
+        float renderFps = streaming_render_fps(dst->decodedFps);
+        float lossPct = (dst->totalFrames > 0)
+            ? (float) dst->networkDroppedFrames / (float) dst->totalFrames * 100.0f
+            : 0.0f;
+        float bitrateMbps = (float) dst->currentBitrateKbps / 1000000.0f;
+
         float hostMs = 0.0f;
         float submitMs = 0.0f;
         float decOnlyMs = 0.0f;
+        bool have_render = false;
+        bool have_decode = false;
+        bool have_encode = false;
         if (dst->submittedFrames) {
+            submitMs = (float) dst->totalSubmitTime / (float) dst->submittedFrames;
+            have_render = true;
             if (vdec_stream_info.has_host_latency) {
                 hostMs = (float) dst->totalCaptureLatency / (float) dst->submittedFrames / 10.0f;
+                have_encode = true;
             }
             if (vdec_stream_info.has_decoder_latency) {
-                submitMs = (float) dst->totalSubmitTime / (float) dst->submittedFrames;
                 decOnlyMs = dst->avgDecoderLatency;
+                have_decode = true;
             }
         }
-        float totalMs = netMs + hostMs + submitMs + decOnlyMs;
-        float fdPct = (dst->totalFrames > 0)
-            ? (float) dst->networkDroppedFrames / (float) dst->totalFrames * 100.0f
-            : 0.0f;
-        const char *codec = streaming_codec_display(vdec_stream_info.format);
-        int w = info->width > 0 ? info->width : 0;
-        int h = info->height > 0 ? info->height : 0;
-        const char *hdr_str = app_configuration->hdr ? "HDR" : "SDR";
-        float bitrateMbps = (float) dst->currentBitrateKbps / 1000000.0f;
-        lv_label_set_text_fmt(controller->stats_compact_label,
-                              "%d\u00d7%d %s %s FPS %.0f N %u/%ums H %.0fms S %.0fms D %.0fms TL %.0fms FD %.2f%% %.1f Mbps",
-                              w, h, hdr_str, codec, renderFps,
-                              (unsigned) dst->rtt, (unsigned) dst->rttVariance,
-                              hostMs, submitMs, decOnlyMs, totalMs, fdPct, bitrateMbps);
+        float totalMs = (float) dst->rtt + hostMs + submitMs + decOnlyMs;
+
+        int len = snprintf(stats_line, sizeof(stats_line),
+                           "%dx%d@%s %s%s FPS %.1f Rx \xb7 %.1f De \xb7 %.1f Rd "
+                           "N %u \xb1 %ums FD %.2f%% BW %.2f Mbps",
+                           w, h, fps_text, codec, hdr_suffix,
+                           dst->receivedFps, dst->decodedFps, renderFps,
+                           (unsigned) dst->rtt, (unsigned) dst->rttVariance,
+                           lossPct, bitrateMbps);
+        if (len > 0 && (size_t) len < sizeof(stats_line) && (have_render || have_decode || have_encode)) {
+            len += snprintf(stats_line + len, sizeof(stats_line) - (size_t) len, " |");
+            bool first = true;
+            if (have_render && len > 0 && (size_t) len < sizeof(stats_line)) {
+                len += snprintf(stats_line + len, sizeof(stats_line) - (size_t) len,
+                                "%sS %.2fms", first ? "" : " \xb7 ", submitMs);
+                first = false;
+            }
+            if (have_decode && len > 0 && (size_t) len < sizeof(stats_line)) {
+                len += snprintf(stats_line + len, sizeof(stats_line) - (size_t) len,
+                                "%sD %.2fms", first ? "" : " \xb7 ", decOnlyMs);
+                first = false;
+            }
+            if (have_encode && len > 0 && (size_t) len < sizeof(stats_line)) {
+                snprintf(stats_line + len, sizeof(stats_line) - (size_t) len,
+                         "%sEn %.1fms", first ? "" : " \xb7 ", hostMs);
+            }
+        }
+        lv_label_set_text(controller->stats_compact_label, stats_line);
         /* Quality dot: green ≤25ms, yellow ≤30ms, red >30ms */
         if (controller->stats_quality_indicator) {
             lv_color_t qc = totalMs <= 25.0f ? lv_palette_main(LV_PALETTE_GREEN)
@@ -249,19 +321,7 @@ bool streaming_refresh_stats() {
                           audio_stream_info.channels, SS4S_ModuleInfoGetId(app->ss4s.selection.audio_module));
     lv_label_set_text_fmt(controller->stats_items.rtt, "%d ms (var. %d ms)", dst->rtt, dst->rttVariance);
     lv_label_set_text_fmt(controller->stats_items.net_fps, "%.2f FPS", dst->receivedFps);
-    float renderFps = dst->decodedFps;
-#if defined(TARGET_WEBOS)
-    int displayRate = 0;
-    if (SDL_webOSGetRefreshRate(&displayRate) && displayRate > 0 && renderFps > (float) displayRate) {
-        renderFps = (float) displayRate;
-    }
-#else
-    SDL_DisplayMode mode;
-    if (SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.refresh_rate > 0
-        && renderFps > (float) mode.refresh_rate) {
-        renderFps = (float) mode.refresh_rate;
-    }
-#endif
+    float renderFps = streaming_render_fps(dst->decodedFps);
     lv_label_set_text_fmt(controller->stats_items.render_fps, "%.2f FPS", renderFps);
     lv_label_set_text_fmt(controller->stats_items.bitrate, "%u Mbps", dst->currentBitrateKbps / 1000000);
 
@@ -393,6 +453,12 @@ static bool on_event(lv_fragment_t *self, int code, void *userdata) {
         case USER_CLOSE_SOFT_KEYBOARD: {
             if (streaming_soft_keyboard_shown()) {
                 soft_keyboard_close_cb(controller);
+            }
+            return true;
+        }
+        case USER_CLOSE_HID_PANEL: {
+            if (streaming_hid_panel_shown()) {
+                hid_panel_close_cb(controller);
             }
             return true;
         }
@@ -555,6 +621,10 @@ static void hid_panel_close_cb(void *userdata) {
         return;
     }
     if (controller->hid_panel) {
+        lv_group_t *group = hid_passthrough_panel_get_group(controller->hid_panel);
+        if (group) {
+            app_input_remove_modal_group(&controller->global->ui.input, group);
+        }
         lv_obj_del(controller->hid_panel);
         controller->hid_panel = NULL;
     }
@@ -577,8 +647,9 @@ static void open_hid_devices(lv_event_t *event) {
     }
     lv_group_t *group = hid_passthrough_panel_get_group(controller->hid_panel);
     if (group) {
-        app_input_set_group(&controller->global->ui.input, group);
+        app_input_push_modal_group(&controller->global->ui.input, group);
     }
+    hid_passthrough_panel_focus_initial(controller->hid_panel);
 }
 #endif
 

@@ -30,6 +30,7 @@ typedef struct {
     char name[128];
     char path[64];    /* /dev/hidrawN */
     char mac[64];
+    char usb_busid[64]; /* USB port id (e.g. "5-1") for composite sibling resolve */
 } ctm_controller_dev_t;
 
 typedef struct ctm_controller ctm_controller_t;   /* opaque; defined in stage 2 */
@@ -44,6 +45,8 @@ typedef struct {
     bool request_bt_mode;     /* send the Sony feature-0x05 full-BT-mode probe */
     bool composite;           /* forward EVERY HID interface, each tagged by its IN
                                * endpoint (puck); host plugs the whole composite. */
+    bool composite_evdev_gamepad; /* Flydigi XInput: feed xpad/js evdev as HID on the
+                                   * gamepad interface IN endpoint (no hidraw). */
 
     /* Does this type claim the device? Factory tries specific types first,
      * generic last. */
@@ -103,6 +106,7 @@ void ctm_bt_sign_output(uint8_t *data, size_t len);
 extern const ctm_controller_ops_t ctm_controller_ds5_ops;
 extern const ctm_controller_ops_t ctm_controller_ds4_ops;
 extern const ctm_controller_ops_t ctm_controller_xbox_ops;
+extern const ctm_controller_ops_t ctm_controller_flydigi_ops;
 extern const ctm_controller_ops_t ctm_controller_steam_puck_ops;
 extern const ctm_controller_ops_t ctm_controller_generic_ops;
 

@@ -13,6 +13,8 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
 
 void hid_passthrough_panel_refresh(lv_obj_t *panel);
 
+void hid_passthrough_panel_focus_initial(lv_obj_t *panel);
+
 lv_group_t *hid_passthrough_panel_get_group(lv_obj_t *panel);
 
 #else
@@ -27,6 +29,10 @@ static inline lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t
 }
 
 static inline void hid_passthrough_panel_refresh(lv_obj_t *panel) {
+    (void) panel;
+}
+
+static inline void hid_passthrough_panel_focus_initial(lv_obj_t *panel) {
     (void) panel;
 }
 

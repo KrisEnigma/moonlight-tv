@@ -485,6 +485,31 @@ msgstr ""
 msgid "H265 usually has better graphics, and supports HDR."
 msgstr ""
 
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Periodic decoder refresh (HEVC)"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Request a keyframe every N seconds during HEVC streams to reduce long-session "
+"artifact drift. Off by default; use 10–30 s if you see blockiness or color smearing."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Enable H265 to use periodic decoder refresh."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+#, c-format
+msgid "Request a keyframe every %d seconds during HEVC streams."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Request a keyframe every N seconds during HEVC streams to reduce long-session "
+"artifact drift. Off by default."
+msgstr ""
+
 #: src/app/ui/settings/panes/video.pane.c:102
 #, c-format
 msgid "%s decoder doesn't support H265 codec."
@@ -703,6 +728,78 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Close"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "CTM Device Bridge"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Devices"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "No HID devices visible to the native app"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Recognize as native Flydigi on PC"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "DualSense / DualShock settings"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid ""
+"Tune BT audio route, latency and haptics for the selected controller. "
+"Use Auto for game-driven audio; lower latency may fix crackling. "
+"Plug in the device for changes to take effect immediately."
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Audio/haptics latency — %d ms (default: 48 ms)"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Audio output"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid ""
+"Auto (game decides)\n"
+"Off\n"
+"Controller speaker\n"
+"Headphone jack\n"
+"Speaker + jack"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Speaker volume — %d%%"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Headphone jack volume — %d%%"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Haptics strength — %d%% (default: 100%%)"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Reset to defaults"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Refresh"
+msgstr ""
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "starting"
+msgstr ""
+
 #: src/app/ui/streaming/streaming.view.c:96
 msgid "Disconnect"
 msgstr ""
@@ -736,6 +833,46 @@ msgid ""
 "Starfish: PTS follows nominal frame rate and catches up to real time when late, "
 "with a fixed early presentation hint — stronger vsync without extra decode work. "
 "Reconnect stream after changing."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Advanced decode (TV)"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Pause at decode time (default: On)"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Starfish SMP: when enabled, the decoder may wait at decode time "
+"(slightly higher latency). Disable to reduce decode latency. "
+"Reconnect stream after changing."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Decoder buffer — %d MB (default: %d MB)"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Initial buffer for assembling video frames before feeding the decoder. "
+"Increase for large IDR frames at 4K/high bitrate."
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "IDR request throttle — Off (default: Off)"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "IDR request throttle — %d ms (default: Off)"
+msgstr ""
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Minimum interval between IDR (keyframe) requests when the decoder buffer is full. "
+"Off = immediate requests (default). Enable 1500–3000 ms to reduce control-channel "
+"congestion and input latency on aggressive host presets."
 msgstr ""
 
 #: src/app/ui/settings/panes/video.pane.c

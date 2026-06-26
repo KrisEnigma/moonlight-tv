@@ -112,32 +112,45 @@ typedef struct {
     unsigned int speaker_volume_percent;
 } ui_device_settings_t;
 
-/* One USB interface of the puck (from the device-dir sysfs walk). */
-typedef struct { int num; char cls[8]; char node[64]; char dir[32]; } puck_if_t;
+/* One USB interface of a composite device (from the device-dir sysfs walk). */
+typedef struct { int num; char cls[8]; char node[64]; char dir[32]; } composite_if_t;
+typedef composite_if_t puck_if_t;
 
-/* Cached puck USB enumeration — captured ONCE at physical plug (Stage 1) and
- * forwarded verbatim to Windows at bridge plug. The enumeration is static
- * (wireless controllers coming/going do not change it). */
-#define PUCK_ENUM_MAX_IF    12
-#define PUCK_ENUM_MAX_DESC  4096
-#define PUCK_ENUM_MAX_RDESC 1024
+/* Cached composite USB enumeration — captured once per usb_busid and forwarded
+ * verbatim to Windows at bridge plug (CTMB_MSG_ENUM). */
+#define COMPOSITE_ENUM_MAX_IF    12
+#define COMPOSITE_ENUM_MAX_DESC  4096
+#define COMPOSITE_ENUM_MAX_RDESC 1024
+#define COMPOSITE_ENUM_MAX_CACHE 8
+#define PUCK_ENUM_MAX_IF    COMPOSITE_ENUM_MAX_IF
+#define PUCK_ENUM_MAX_DESC  COMPOSITE_ENUM_MAX_DESC
+#define PUCK_ENUM_MAX_RDESC COMPOSITE_ENUM_MAX_RDESC
+
 typedef struct {
     int num;
     char cls[8];
     char node[64];
     int rdesc_len;
-    uint8_t rdesc[PUCK_ENUM_MAX_RDESC];
-} puck_enum_if_t;
+    uint8_t rdesc[COMPOSITE_ENUM_MAX_RDESC];
+} composite_enum_if_t;
+typedef composite_enum_if_t puck_enum_if_t;
+
 typedef struct {
     int valid;
+    char key[64];                              /* usb_busid or usbdir basename */
     char usbdir[256];
     char serial[64];
     int descriptors_len;
-    uint8_t descriptors[PUCK_ENUM_MAX_DESC];   /* device + config + all ifaces + endpoints */
+    uint8_t descriptors[COMPOSITE_ENUM_MAX_DESC];
     int if_count;
-    puck_enum_if_t ifs[PUCK_ENUM_MAX_IF];
-} puck_enum_t;
-extern puck_enum_t g_puck_enum;
+    composite_enum_if_t ifs[COMPOSITE_ENUM_MAX_IF];
+    uint8_t full_speed;                        /* 1 = USB full-speed (12 Mbps) */
+} composite_enum_t;
+typedef composite_enum_t puck_enum_t;
+
+extern composite_enum_t g_composite_enums[COMPOSITE_ENUM_MAX_CACHE];
+extern int g_composite_enum_count;
+extern puck_enum_t g_puck_enum;                /* legacy alias: first valid cache entry */
 
 /* ---- headless global state (defined in ctm_state.c) --------------------- */
 extern scan_result_t g_scan;
@@ -167,6 +180,10 @@ extern size_t g_log_used;
 extern pthread_mutex_t g_log_mutex;   /* guards g_log + g_log_dirty */
 extern bool g_log_dirty;              /* set by log_append, cleared by ctm_ui_log_flush */
 
+void ctm_set_plug_error(const char *fmt, ...);
+void ctm_clear_plug_error(void);
+const char *ctm_last_plug_error(void);
+
 /* ---- ctm_state.c: log + generic string/file helpers ---- */
 void log_append(const char *fmt, ...);
 int count_dir_entries(const char *path);
@@ -186,6 +203,30 @@ void usb_busid_from_input_path(const char *input_path, char *out, size_t out_len
 void inspect_hidraw(device_info_t *dev);
 const char *bus_label(const char *bus);
 bool is_steam_puck_device(const device_info_t *dev);
+bool is_flydigi_composite_device(const device_info_t *dev);
+bool is_flydigi_logical_device(const logical_device_t *item);
+bool is_flydigi_usb_busid(const char *usb_busid);
+int read_usb_identity_attrs(const char *usb_busid, char *mfg, size_t mfg_len,
+                            char *prod, size_t prod_len);
+bool device_should_list_in_ui(const device_info_t *dev);
+bool is_xpad_only_scan_device(const device_info_t *dev);
+void usb_busid_from_hidraw_name(const char *hidraw, char *out, size_t out_len);
+int flydigi_hidraw_path_for_busid(const char *usb_busid, char *out, size_t out_len);
+int flydigi_hidraw_path_for_item(const logical_device_t *item, char *out, size_t out_len);
+int flydigi_handshake_hidraw_path_for_busid(const char *usb_busid, char *out, size_t out_len);
+int flydigi_handshake_hidraw_path_for_item(const logical_device_t *item, char *out, size_t out_len);
+int flydigi_xpad_evdev_path_for_busid(const char *usb_busid, char *out, size_t out_len);
+int flydigi_xpad_evdev_path_for_item(const logical_device_t *item, char *out, size_t out_len);
+bool flydigi_is_xinput_mode(const logical_device_t *item);
+bool flydigi_is_xinput_mode_for_busid(const char *usb_busid);
+bool flydigi_is_xinput_evdev_only(const logical_device_t *item);
+bool flydigi_is_xinput_evdev_only_for_busid(const char *usb_busid);
+bool flydigi_has_hidraw_for_busid(const char *usb_busid);
+int flydigi_xpad_scan_index_for_item(const logical_device_t *item);
+bool flydigi_has_pluggable_path(const logical_device_t *item);
+extern const uint8_t flydigi_xbox360_wired_rdesc[];
+extern const unsigned flydigi_xbox360_wired_rdesc_len;
+void finalize_logical_devices(logical_result_t *logical);
 bool is_ds5_device(const device_info_t *dev);
 bool is_ds4_device(const device_info_t *dev);
 bool is_xbox_pid(const char *pid);
@@ -211,8 +252,14 @@ void enumerate_devices(scan_result_t *result);
  * Enumerate its interfaces (sorted by interface number) into out[]. Shared by the
  * expanded list (controller/service slots) and the detail panel. */
 int puck_usb_device_dir(const char *vid, const char *pid, char *out, size_t out_len);
+int composite_usb_device_dir_by_busid(const char *usb_busid, char *out, size_t out_len);
+int composite_enumerate_ifaces(const char *usbdir, composite_if_t *out, int max);
 int puck_enumerate_ifaces(const char *usbdir, puck_if_t *out, int max);
-int puck_enum_capture(const char *vid, const char *pid);   /* Stage 1: cache enumeration */
+int composite_enum_capture(const char *usb_busid, const char *vid, const char *pid);
+int puck_enum_capture(const char *vid, const char *pid);
+const composite_enum_t *composite_enum_lookup(const char *key);
+uint8_t *build_composite_enum_payload(const char *key, int *out_len);
+int best_scan_index_for_item(const logical_device_t *item);
 
 /* ---- ui_bridge.c: settings store + agent client + sessions + plug ---- */
 tv_bridge_worker_settings_t default_settings_for_item(const logical_device_t *item);

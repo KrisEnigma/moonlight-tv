@@ -35,6 +35,14 @@ tv_bridge_worker_settings_t default_settings_for_item(const logical_device_t *it
     settings.ds5_patch2_high_nibble = 0xf;
     settings.ds5_patch2_low_nibble = 0x7;
 
+    if (is_flydigi_logical_device(item) ||
+        (item && item->usb_busid[0] && is_flydigi_usb_busid(item->usb_busid)) ||
+        (item && strcmp(item->vid, "04b4") == 0 && strcmp(item->pid, "2412") == 0) ||
+        (item && (contains_ci(item->name, "flydigi") || contains_ci(item->name, "vader") ||
+                  contains_ci(item->name, "apex")))) {
+        settings.composite_passthrough = true;
+    }
+
     const char *kind = bridge_kind_for_item(item);
     if (strcmp(kind, "ds5") == 0) {
         settings.kind = TV_BRIDGE_KIND_DS5;
@@ -239,6 +247,36 @@ bool discover_agent_once(void)
     return g_agent_online;
 }
 
+static bool agent_tcp_reachable(void)
+{
+    if (!g_agent_host[0] && !discover_agent_once()) {
+        return false;
+    }
+    int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) {
+        return false;
+    }
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)g_agent_port);
+    if (inet_aton(g_agent_host, &addr.sin_addr) == 0 ||
+        connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        g_agent_online = false;
+        return false;
+    }
+    close(fd);
+    g_agent_online = true;
+    return true;
+}
+
 int send_agent_command(const char *command, char *response, size_t response_len)
 {
     if (!g_agent_host[0] && !discover_agent_once()) {
@@ -388,6 +426,18 @@ const char *bridge_kind_for_item(const logical_device_t *item)
     if (strcmp(item->vid, "045e") == 0 &&
         (is_xbox_pid(item->pid) || contains_ci(item->name, "xbox"))) return "xbox";
     if (strcmp(item->vid, "28de") == 0 && strcmp(item->pid, "1304") == 0) return "puck";
+    if (is_flydigi_logical_device(item) ||
+        (item->usb_busid[0] && is_flydigi_usb_busid(item->usb_busid)) ||
+        (strcmp(item->vid, "04b4") == 0 && strcmp(item->pid, "2412") == 0) ||
+        contains_ci(item->name, "flydigi") || contains_ci(item->name, "vader") ||
+        contains_ci(item->name, "apex")) {
+        for (int i = 0; i < g_settings_count; ++i) {
+            if (strcmp(g_settings[i].key, item->key) == 0) {
+                return g_settings[i].settings.composite_passthrough ? "flydigi" : "hid";
+            }
+        }
+        return "flydigi";
+    }
     return "hid";
 }
 
@@ -407,48 +457,37 @@ void node_session_key(const logical_device_t *item, int scan_index, char *out, s
  * node, plug it in, and register the session under session_key. Shared by the
  * whole-device plug (plug_in_item) and the per-interface plug (plug_in_node).
  * When: any Plug button. */
-/* Serialize the cached puck enumeration (g_puck_enum) into a CTMB_MSG_ENUM
- * payload: [ctmb_enum_info_t][descriptors blob][ per iface: ctmb_enum_iface_t +
- * report_desc ]. Caller frees. NULL if no valid enumeration. */
-static uint8_t *build_puck_enum_payload(int *out_len)
+/* Serialize cached composite enumeration into CTMB_MSG_ENUM payload. */
+static void enum_lookup_key_for_item(const logical_device_t *item, char *out, size_t out_len)
 {
-    if (!g_puck_enum.valid) return NULL;
-    int size = (int)sizeof(ctmb_enum_info_t) + g_puck_enum.descriptors_len;
-    for (int i = 0; i < g_puck_enum.if_count; ++i) {
-        size += (int)sizeof(ctmb_enum_iface_t) + g_puck_enum.ifs[i].rdesc_len;
+    if (item && item->usb_busid[0]) {
+        snprintf(out, out_len, "%s", item->usb_busid);
+        return;
     }
-    uint8_t *buf = (uint8_t *)malloc((size_t)size);
-    if (!buf) return NULL;
-    int off = 0;
-    ctmb_enum_info_t info;
-    memset(&info, 0, sizeof(info));
-    info.descriptors_len = (uint16_t)g_puck_enum.descriptors_len;
-    info.iface_count = (uint8_t)g_puck_enum.if_count;
-    info.full_speed = 1;   /* the puck is full-speed (speed=12) */
-    memcpy(buf + off, &info, sizeof(info)); off += (int)sizeof(info);
-    memcpy(buf + off, g_puck_enum.descriptors, (size_t)g_puck_enum.descriptors_len);
-    off += g_puck_enum.descriptors_len;
-    for (int i = 0; i < g_puck_enum.if_count; ++i) {
-        ctmb_enum_iface_t ie;
-        memset(&ie, 0, sizeof(ie));
-        ie.interface_number = (uint8_t)g_puck_enum.ifs[i].num;
-        ie.iface_class = (uint8_t)strtol(g_puck_enum.ifs[i].cls, NULL, 16);
-        ie.report_desc_len = (uint16_t)g_puck_enum.ifs[i].rdesc_len;
-        memcpy(buf + off, &ie, sizeof(ie)); off += (int)sizeof(ie);
-        memcpy(buf + off, g_puck_enum.ifs[i].rdesc, (size_t)g_puck_enum.ifs[i].rdesc_len);
-        off += g_puck_enum.ifs[i].rdesc_len;
+    if (item && strcmp(item->vid, "28de") == 0 && strcmp(item->pid, "1304") == 0) {
+        composite_enum_capture(NULL, item->vid, item->pid);
+        for (int i = 0; i < g_composite_enum_count; ++i) {
+            if (g_composite_enums[i].valid) {
+                snprintf(out, out_len, "%s", g_composite_enums[i].key);
+                return;
+            }
+        }
     }
-    *out_len = off;
-    return buf;
+    out[0] = '\0';
 }
 
 static bool plug_in_scan_index(logical_device_t *item, int scan_index, const char *session_key)
 {
     if (!item || scan_index < 0 || scan_index >= g_scan.count) {
+        ctm_set_plug_error("Invalid device selection");
         return false;
     }
-    if (!g_agent_online && !discover_agent_once()) {
-        log_append("Windows agent not found");
+    if (!g_agent_host[0] && !discover_agent_once()) {
+        ctm_set_plug_error("Windows agent not found");
+        return false;
+    }
+    if (!agent_tcp_reachable()) {
+        ctm_set_plug_error("Cannot reach agent at %s:%d", g_agent_host, g_agent_port);
         return false;
     }
 
@@ -459,9 +498,20 @@ static bool plug_in_scan_index(logical_device_t *item, int scan_index, const cha
     char busid[32];
     const char *kind = bridge_kind_for_item(item);
     make_bridge_busid(item, busid, sizeof(busid));
+    if (strcmp(kind, "flydigi") == 0) {
+        char busid_key[64] = {0};
+        if (item->usb_busid[0]) {
+            snprintf(busid_key, sizeof(busid_key), "%s", item->usb_busid);
+        } else if (starts_with(item->key, "flydigi:")) {
+            snprintf(busid_key, sizeof(busid_key), "%s", item->key + strlen("flydigi:"));
+        }
+        if (busid_key[0]) {
+            composite_enum_capture(busid_key, item->vid, item->pid);
+        }
+    }
     snprintf(cmd, sizeof(cmd), "BRIDGE_START %s %d %s", kind, port, busid);
     if (send_agent_command(cmd, response, sizeof(response)) != 0) {
-        log_append("agent bridge start failed: %s", response);
+        ctm_set_plug_error("Agent bridge start failed: %s", response[0] ? response : "no response");
         return false;
     }
 
@@ -473,12 +523,53 @@ static bool plug_in_scan_index(logical_device_t *item, int scan_index, const cha
     snprintf(cdev.pid, sizeof(cdev.pid), "%s", item->pid);
     snprintf(cdev.bus, sizeof(cdev.bus), "%s", bus_label(item->bus));
     snprintf(cdev.name, sizeof(cdev.name), "%s", item->name);
-    snprintf(cdev.path, sizeof(cdev.path), "%s", dev->node);
+    if (is_flydigi_logical_device(item)) {
+        if (flydigi_is_xinput_evdev_only(item)) {
+            if (flydigi_xpad_evdev_path_for_item(item, cdev.path, sizeof(cdev.path)) != 0) {
+                ctm_set_plug_error("Flydigi XInput: xpad evdev not found (busid=%s)",
+                                   item->usb_busid[0] ? item->usb_busid : "-");
+                snprintf(cmd, sizeof(cmd), "BRIDGE_STOP %s", busid);
+                (void)send_agent_command(cmd, response, sizeof(response));
+                return false;
+            }
+        } else if (flydigi_handshake_hidraw_path_for_item(item, cdev.path, sizeof(cdev.path)) != 0) {
+            cdev.path[0] = '\0';
+        }
+        if (!flydigi_has_pluggable_path(item)) {
+            ctm_set_plug_error("Flydigi: no handshake hidraw or xpad path (busid=%s)",
+                               item->usb_busid[0] ? item->usb_busid : "-");
+            snprintf(cmd, sizeof(cmd), "BRIDGE_STOP %s", busid);
+            (void)send_agent_command(cmd, response, sizeof(response));
+            return false;
+        }
+        if (flydigi_is_xinput_mode(item)) {
+            char xpad_path[64];
+            if (flydigi_xpad_evdev_path_for_item(item, xpad_path, sizeof(xpad_path)) != 0) {
+                ctm_set_plug_error("Flydigi XInput: xpad evdev not found (busid=%s)",
+                                   item->usb_busid[0] ? item->usb_busid : "-");
+                snprintf(cmd, sizeof(cmd), "BRIDGE_STOP %s", busid);
+                (void)send_agent_command(cmd, response, sizeof(response));
+                return false;
+            }
+            if (cdev.path[0] == '\0') {
+                snprintf(cdev.path, sizeof(cdev.path), "%s", xpad_path);
+            }
+        } else if (cdev.path[0] == '\0') {
+            ctm_set_plug_error("Flydigi D-Input: no hidraw path (busid=%s)",
+                               item->usb_busid[0] ? item->usb_busid : "-");
+            snprintf(cmd, sizeof(cmd), "BRIDGE_STOP %s", busid);
+            (void)send_agent_command(cmd, response, sizeof(response));
+            return false;
+        }
+    } else {
+        snprintf(cdev.path, sizeof(cdev.path), "%s", dev->node);
+    }
     snprintf(cdev.mac, sizeof(cdev.mac), "%s", item->mac);
+    snprintf(cdev.usb_busid, sizeof(cdev.usb_busid), "%s", item->usb_busid);
 
     ctm_controller_t *controller = ctm_controller_create(&cdev);
     if (!controller) {
-        log_append("controller create failed");
+        ctm_set_plug_error("Controller create failed");
         snprintf(cmd, sizeof(cmd), "BRIDGE_STOP %s", busid);
         (void)send_agent_command(cmd, response, sizeof(response));
         return false;
@@ -487,27 +578,35 @@ static bool plug_in_scan_index(logical_device_t *item, int scan_index, const cha
     if (settings) {
         ctm_controller_set_settings(controller, settings);
     }
-    /* Composite (puck): forward the cached USB enumeration so the host builds the
-     * full composite device from the puck's own descriptors (Stage 2). */
-    if (strcmp(kind, "puck") == 0 && g_puck_enum.valid) {
+    /* Composite: forward cached USB enumeration so the host builds the device. */
+    if (strcmp(kind, "puck") == 0 || strcmp(kind, "flydigi") == 0) {
+        char enum_key[64];
+        enum_lookup_key_for_item(item, enum_key, sizeof(enum_key));
         int elen = 0;
-        uint8_t *epl = build_puck_enum_payload(&elen);
+        uint8_t *epl = build_composite_enum_payload(enum_key, &elen);
         if (epl) {
             ctm_controller_set_enum_payload(controller, epl, elen);
             free(epl);
-            log_append("forwarding puck enumeration to host (%d bytes)", elen);
+            log_append("forwarding composite enumeration to host (%d bytes, key=%s)", elen, enum_key);
+        } else {
+            ctm_set_plug_error("Composite enum missing for %s (tap Refresh)", enum_key);
+            ctm_controller_destroy(controller);
+            snprintf(cmd, sizeof(cmd), "BRIDGE_STOP %s", busid);
+            (void)send_agent_command(cmd, response, sizeof(response));
+            return false;
         }
     }
     if (ctm_controller_plug_in(controller, g_agent_host, port) != 0) {
-        log_append("controller plug-in failed");
+        ctm_set_plug_error("Controller plug-in failed");
         ctm_controller_destroy(controller);
         snprintf(cmd, sizeof(cmd), "BRIDGE_STOP %s", busid);
         (void)send_agent_command(cmd, response, sizeof(response));
         return false;
     }
     add_session(session_key, busid, controller, port);
+    ctm_clear_plug_error();
     log_append("controller started kind=%s node=%s busid=%s host=%s port=%d",
-               kind, dev->node, busid, g_agent_host, port);
+               kind, cdev.path, busid, g_agent_host, port);
     return true;
 }
 
@@ -516,11 +615,27 @@ static bool plug_in_scan_index(logical_device_t *item, int scan_index, const cha
 bool plug_in_item(logical_device_t *item)
 {
     if (!item) {
+        ctm_set_plug_error("No device selected");
         return false;
     }
-    int scan_index = first_scan_index_for_item(item);
+    int scan_index = flydigi_xpad_scan_index_for_item(item);
     if (scan_index < 0) {
-        log_append("no hidraw node for %s", item->name);
+        scan_index = best_scan_index_for_item(item);
+    }
+    if (scan_index < 0) {
+        scan_index = first_scan_index_for_item(item);
+    }
+    if (scan_index < 0) {
+        ctm_set_plug_error("No device node for %s", item->name);
+        return false;
+    }
+    if (is_flydigi_logical_device(item) && !flydigi_has_pluggable_path(item)) {
+        ctm_set_plug_error("Flydigi: no hidraw/xpad for %s", item->name);
+        return false;
+    }
+    const device_info_t *dev = &g_scan.devices[scan_index];
+    if (!is_flydigi_logical_device(item) && !dev->hidraw[0]) {
+        ctm_set_plug_error("No hidraw node for %s", item->name);
         return false;
     }
     return plug_in_scan_index(item, scan_index, item->key);

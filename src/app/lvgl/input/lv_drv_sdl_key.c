@@ -28,7 +28,7 @@ static void webos_key_input_mode(app_ui_input_t *input, const SDL_KeyboardEvent 
 static bool read_webos_channel_keys(const SDL_KeyboardEvent *event, lv_drv_sdl_key_t *state);
 
 static bool ui_modal_consumes_input(void) {
-    return streaming_soft_keyboard_shown();
+    return streaming_soft_keyboard_shown() || streaming_hid_panel_shown();
 }
 
 static bool read_keyboard(app_ui_input_t *input, const SDL_KeyboardEvent *event, lv_drv_sdl_key_t *state);
@@ -162,6 +162,26 @@ static void sdl_input_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
                     case NAVKEY_CONFIRM:
                     case NAVKEY_CANCEL:
                         read_event(&e, state);
+                        handled_modal = true;
+                        break;
+                    default:
+                        break;
+                }
+            } else if (streaming_hid_panel_shown()) {
+                switch (navkey) {
+                    case NAVKEY_UP:
+                    case NAVKEY_DOWN:
+                    case NAVKEY_LEFT:
+                    case NAVKEY_RIGHT:
+                    case NAVKEY_CONFIRM:
+                        read_event(&e, state);
+                        handled_modal = true;
+                        break;
+                    case NAVKEY_CANCEL:
+                        read_event(&e, state);
+                        if (pressed) {
+                            bus_pushevent(USER_CLOSE_HID_PANEL, NULL, NULL);
+                        }
                         handled_modal = true;
                         break;
                     default:

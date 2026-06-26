@@ -51,12 +51,9 @@ typedef struct app_settings_t {
     int hid_passthrough_port;
     bool hdr;   /* HDR10 (PQ) over HEVC Main10 or AV1 Main10 when host and decoder support it */
     bool force_full_color_range; /* SDR only: request full-range YUV (0-255) from host. No effect when HDR is on. */
-    /**
-     * webOS Starfish: nominal-frame PTS pacing + fixed small negative presentation offset
-     * for tighter vsync without adding latency when the stream runs late.
-     */
-    bool video_tight_sync;
     bool hevc;
+    /** Periodic HEVC IDR refresh interval in seconds (0 = off, min 2 when enabled). */
+    int idr_refresh_interval_sec;
     /** Sunshine: negotiate AV1 Main8/Main10 when decoder exposes SS4S_VIDEO_AV1. */
     bool av1;
     bool show_stats_on_start;
@@ -95,6 +92,9 @@ extern const size_t audio_config_len;
 #define RES_3_6K RES_MERGE(3584, 2016)
 #define RES_1800P RES_MERGE(3200, 1800)
 #define RES_4K RES_MERGE(3840, 2160)
+
+/** Fixed decode-unit reassembly buffer (megabytes). */
+#define VDEC_REASSEMBLY_BUFFER_MB 2
 
 void settings_initialize(app_settings_t *config, char *conf_dir);
 

@@ -485,6 +485,35 @@ msgstr "Usar H.265 quando possível"
 msgid "H265 usually has better graphics, and supports HDR."
 msgstr "H.265 geralmente tem melhor qualidade gráfica e suporta HDR."
 
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Periodic decoder refresh (HEVC)"
+msgstr "Atualização periódica do decoder (HEVC)"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Request a keyframe every N seconds during HEVC streams to reduce long-session "
+"artifact drift. Off by default; use 10–30 s if you see blockiness or color smearing."
+msgstr ""
+"Solicita um keyframe a cada N segundos em streams HEVC para reduzir drift de "
+"artefatos em sessões longas. Desligado por padrão; use 10–30 s se notar blocos ou manchas de cor."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Enable H265 to use periodic decoder refresh."
+msgstr "Ative H.265 para usar atualização periódica do decoder."
+
+#: src/app/ui/settings/panes/video.pane.c
+#, c-format
+msgid "Request a keyframe every %d seconds during HEVC streams."
+msgstr "Solicita um keyframe a cada %d segundos em streams HEVC."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Request a keyframe every N seconds during HEVC streams to reduce long-session "
+"artifact drift. Off by default."
+msgstr ""
+"Solicita um keyframe a cada N segundos em streams HEVC para reduzir drift de "
+"artefatos em sessões longas. Desligado por padrão."
+
 #: src/app/ui/settings/panes/video.pane.c:102
 #, c-format
 msgid "%s decoder doesn't support H265 codec."
@@ -633,6 +662,86 @@ msgstr "Conectar"
 msgid "Back"
 msgstr "Voltar"
 
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Close"
+msgstr "Fechar"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "CTM Device Bridge"
+msgstr "Ponte CTM de dispositivos"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Devices"
+msgstr "Dispositivos"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "No HID devices visible to the native app"
+msgstr "Nenhum dispositivo HID visível para o app nativo"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Recognize as native Flydigi on PC"
+msgstr "Reconhecer como Flydigi nativo no PC"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "DualSense / DualShock settings"
+msgstr "Configurações DualSense / DualShock"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid ""
+"Tune BT audio route, latency and haptics for the selected controller. "
+"Use Auto for game-driven audio; lower latency may fix crackling. "
+"Plug in the device for changes to take effect immediately."
+msgstr ""
+"Ajuste rota de áudio BT, latência e haptics do controle selecionado. "
+"Use Auto para o jogo decidir; latência menor pode reduzir estalos. "
+"Conecte o dispositivo para aplicar as mudanças na hora."
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Audio/haptics latency — %d ms (default: 48 ms)"
+msgstr "Latência áudio/haptics — %d ms (padrão: 48 ms)"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Audio output"
+msgstr "Saída de áudio"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid ""
+"Auto (game decides)\n"
+"Off\n"
+"Controller speaker\n"
+"Headphone jack\n"
+"Speaker + jack"
+msgstr ""
+"Auto (jogo decide)\n"
+"Desligado\n"
+"Alto-falante do controle\n"
+"Fone no controle\n"
+"Alto-falante + fone"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Speaker volume — %d%%"
+msgstr "Volume do alto-falante — %d%%"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Headphone jack volume — %d%%"
+msgstr "Volume do fone — %d%%"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Haptics strength — %d%% (default: 100%%)"
+msgstr "Força dos haptics — %d%% (padrão: 100%%)"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Reset to defaults"
+msgstr "Restaurar padrões"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "Refresh"
+msgstr "Atualizar"
+
+#: src/app/ui/streaming/hid_passthrough_panel.c
+msgid "starting"
+msgstr "iniciando"
+
 #: src/app/ui/streaming/streaming.view.c:96
 msgid "Disconnect"
 msgstr "Desconectar"
@@ -682,6 +791,54 @@ msgstr ""
 "Starfish: PTS segue a cadência nominal e alinha ao tempo real quando atrasado, "
 "com um avanço fixo na apresentação — vsync mais firme sem custo extra no decode. "
 "Reconecte o stream após alterar."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Advanced decode (TV)"
+msgstr "Decodificação avançada (TV)"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Pause at decode time (default: On)"
+msgstr "Pausar no tempo de decode (padrão: Ligado)"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Starfish SMP: when enabled, the decoder may wait at decode time "
+"(slightly higher latency). Disable to reduce decode latency. "
+"Reconnect stream after changing."
+msgstr ""
+"Starfish SMP: quando ativo, o decoder pode esperar no tempo de decode "
+"(latência um pouco maior). Desative para reduzir a latência de decode. "
+"Reconecte o stream após alterar."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "Decoder buffer — %d MB (default: %d MB)"
+msgstr "Buffer do decoder — %d MB (padrão: %d MB)"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Initial buffer for assembling video frames before feeding the decoder. "
+"Increase for large IDR frames at 4K/high bitrate."
+msgstr ""
+"Buffer inicial para montar frames de vídeo antes de enviar ao decoder. "
+"Aumente para IDRs grandes em 4K/alto bitrate."
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "IDR request throttle — Off (default: Off)"
+msgstr "Throttle de IDR — Desligado (padrão: Desligado)"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid "IDR request throttle — %d ms (default: Off)"
+msgstr "Throttle de IDR — %d ms (padrão: Desligado)"
+
+#: src/app/ui/settings/panes/video.pane.c
+msgid ""
+"Minimum interval between IDR (keyframe) requests when the decoder buffer is full. "
+"Off = immediate requests (default). Enable 1500–3000 ms to reduce control-channel "
+"congestion and input latency on aggressive host presets."
+msgstr ""
+"Intervalo mínimo entre pedidos de IDR (keyframe) quando o buffer do decoder enche. "
+"Desligado = pedidos imediatos (padrão). Use 1500–3000 ms para reduzir congestionamento "
+"no canal de controle e latência de input em presets agressivos do host."
 
 #: src/app/ui/settings/panes/video.pane.c
 msgid "Use AV1 when possible"

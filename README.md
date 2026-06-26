@@ -9,7 +9,6 @@ Unofficial fork of [Moonlight TV](https://github.com/mariotaku/moonlight-tv) for
 - **AMOLED layout** — pure black background (`#000000`), dark surfaces, and violet accent; launcher, game grid, and settings popups share the same theme.
 - **3.6K resolution (3584×2016)** — option between 2K and 4K; ~90% of 4K pixel area with less load on the TV decoder and lower input lag than native 4K on recent models.
 - **HDR10 (PQ)** over HEVC Main10 or AV1 Main10 (when supported).
-- **Tight display sync** (webOS) — tighter panel sync; see below.
 - Up to **400 Mbps** on the bitrate slider (UI maximum); practical guidance below.
 
 ## Recommended settings (LG OLED)
@@ -20,17 +19,8 @@ Unofficial fork of [Moonlight TV](https://github.com/mariotaku/moonlight-tv) for
 | **FPS** | 60 or 120 depending on game and network |
 | **Codec** | HEVC (H.265); AV1 if host and decoder expose it |
 | **Bitrate** | **Up to ~270 Mbps** on stable 5 GHz Wi‑Fi — reduces micro-stutters and throughput drops on heavy streams (HDR, 120 Hz). Increase gradually; visual gains above that are usually small |
-| **Tight display sync** | Enable in **Settings → Video → Smooth playback (TV)** after testing; reconnect the stream when changed |
 
 On an unstable network, start at **120–180 Mbps** for 3.6K HDR before going higher.
-
-## Tight display sync (VSync)
-
-On the **Starfish** decoder (webOS), video PTS follows the stream’s **nominal frame rate** (e.g. 120 Hz) and **catches up** when the stream falls behind real time, with a small fixed early presentation hint.
-
-- **On:** steadier panel vsync, less visual “drag” at 120 Hz, no extra decode work.
-- **Off:** behavior closer to stock Moonlight TV.
-- **Where:** Settings → Video → *Smooth playback (TV)* / *Tight display sync* — or `[video] tight_display_sync=` in the INI. **Reconnect** after changing.
 
 ## Status overlay
 

@@ -27,7 +27,6 @@
 // demand to accommodate larger frames (e.g. 4K IDR frames at high
 // bitrate routinely exceed 2 MB), capped to keep a malformed stream
 // from exhausting memory.
-#define DECODER_BUFFER_INITIAL_SIZE (2 * 1024 * 1024)
 #define DECODER_BUFFER_MAX_SIZE (32 * 1024 * 1024)
 
 /** Slices hint for pipeline decode while later slices still arrive (high bitrate / 120 Hz). */
@@ -35,10 +34,13 @@
 
 static int vdec_stream_target_fps = 60;
 
+static int frames_since_idr = 0;
+
 static session_t *session = NULL;
 static SS4S_Player *player = NULL;
 static unsigned char *buffer = NULL;
 static size_t buffer_size = 0;
+static size_t buffer_initial_size = 0;
 static int lastFrameNumber;
 static struct VIDEO_STATS vdec_temp_stats;
 static int vdec_stream_format = 0;
@@ -55,6 +57,10 @@ static int vdec_delegate_submit(PDECODE_UNIT decodeUnit);
 static void vdec_stat_submit(const struct VIDEO_STATS *src, unsigned long now);
 
 static void stream_info_parse_size(PDECODE_UNIT decodeUnit, struct VIDEO_INFO *info);
+
+static size_t vdec_buffer_initial_bytes(void) {
+    return (size_t) VDEC_REASSEMBLY_BUFFER_MB * 1024U * 1024U;
+}
 
 DECODER_RENDERER_CALLBACKS ss4s_dec_callbacks = {
         .setup = vdec_delegate_setup,
@@ -109,13 +115,15 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
     (void) drFlags;
     session = context;
     player = session->player;
-    buffer_size = DECODER_BUFFER_INITIAL_SIZE;
+    buffer_initial_size = vdec_buffer_initial_bytes();
+    buffer_size = buffer_initial_size;
     buffer = malloc(buffer_size);
     memset(&vdec_temp_stats, 0, sizeof(vdec_temp_stats));
     memset(&vdec_stream_info, 0, sizeof(vdec_stream_info));
     vdec_stream_format = videoFormat;
     vdec_stream_info.format = video_format_name(videoFormat);
     lastFrameNumber = 0;
+    frames_since_idr = 0;
     vdec_stream_target_fps = redrawRate > 0 ? redrawRate : 60;
     vdec_warned_near_buffer_limit = false;
 
@@ -130,13 +138,6 @@ int vdec_delegate_setup(int videoFormat, int width, int height, int redrawRate, 
     info.height = height;
     info.frameRateNumerator = vdec_stream_target_fps;
     info.frameRateDenominator = 1;
-    if (app_configuration != NULL) {
-        info.tightDisplaySync = app_configuration->video_tight_sync;
-        if (info.tightDisplaySync) {
-            commons_log_info("Session", "Video decoder: tight display sync enabled (%d fps)",
-                             vdec_stream_target_fps);
-        }
-    }
     switch (videoFormat) {
         case VIDEO_FORMAT_H264:
             info.codec = SS4S_VIDEO_H264;
@@ -176,6 +177,7 @@ void vdec_delegate_cleanup() {
     free(buffer);
     buffer = NULL;
     buffer_size = 0;
+    buffer_initial_size = 0;
     SS4S_PlayerVideoClose(player);
     session = NULL;
 }
@@ -187,7 +189,10 @@ int vdec_delegate_submit(PDECODE_UNIT decodeUnit) {
                               decodeUnit->fullLength, (size_t) DECODER_BUFFER_MAX_SIZE);
             return DR_NEED_IDR;
         }
-        size_t new_size = buffer_size > 0 ? buffer_size : DECODER_BUFFER_INITIAL_SIZE;
+        size_t new_size = buffer_size > 0 ? buffer_size : buffer_initial_size;
+        if (new_size == 0) {
+            new_size = vdec_buffer_initial_bytes();
+        }
         while (new_size < (size_t) decodeUnit->fullLength) {
             new_size *= 2;
         }
@@ -227,11 +232,11 @@ int vdec_delegate_submit(PDECODE_UNIT decodeUnit) {
     vdec_temp_stats.totalCaptureLatency += decodeUnit->frameHostProcessingLatency;
     vdec_temp_stats.totalReassemblyTime += decodeUnit->enqueueTimeMs - decodeUnit->receiveTimeMs;
     vdec_stream_info.has_host_latency |= decodeUnit->frameHostProcessingLatency > 0;
-    if (!vdec_warned_near_buffer_limit &&
-        (size_t) decodeUnit->fullLength > (DECODER_BUFFER_INITIAL_SIZE * 9 / 10)) {
+    if (!vdec_warned_near_buffer_limit && buffer_initial_size > 0 &&
+        (size_t) decodeUnit->fullLength > (buffer_initial_size * 9 / 10)) {
         vdec_warned_near_buffer_limit = true;
         commons_log_warn("Session", "Video frame size %d is near initial decoder buffer (%zu)",
-                         decodeUnit->fullLength, (size_t) DECODER_BUFFER_INITIAL_SIZE);
+                         decodeUnit->fullLength, buffer_initial_size);
     }
     size_t length = 0;
     PLENTRY entry = decodeUnit->bufferList;
@@ -250,6 +255,19 @@ int vdec_delegate_submit(PDECODE_UNIT decodeUnit) {
     }
     SS4S_VideoFeedResult result = SS4S_PlayerVideoFeed(player, buffer, length, flags);
     if (result == SS4S_VIDEO_FEED_OK) {
+        if (decodeUnit->frameType == FRAME_TYPE_IDR) {
+            frames_since_idr = 0;
+        } else {
+            frames_since_idr++;
+        }
+        const int idr_interval = app_configuration ? app_configuration->idr_refresh_interval_sec : 0;
+        const bool hevc_stream = vdec_stream_format == VIDEO_FORMAT_H265 ||
+                                 vdec_stream_format == VIDEO_FORMAT_H265_MAIN10;
+        if (hevc_stream && idr_interval >= 2 && vdec_stream_target_fps > 0 &&
+            frames_since_idr >= vdec_stream_target_fps * idr_interval) {
+            LiRequestIdrFrame();
+            frames_since_idr = 0;
+        }
         if (vdec_stream_info.width == 0 || vdec_stream_info.height == 0) {
             stream_info_parse_size(decodeUnit, &vdec_stream_info);
         }
