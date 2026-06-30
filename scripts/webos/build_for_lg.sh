@@ -33,9 +33,13 @@ for cmd in cmake awk gawk; do
     fi
 done
 
-# Initialize submodules
-echo "Updating submodules..."
-git submodule update --init --recursive
+# Initialize submodules (skip when CI=1 — e.g. Docker or dirty ss4s checkout)
+if [ -z "${CI}" ]; then
+    echo "Updating submodules..."
+    git submodule update --init --recursive
+else
+    echo "Skipping git submodule update (CI=1)."
+fi
 
 # Download and configure webOS SDK if not present
 if [ ! -f "${SDK_DIR}/share/buildroot/toolchainfile.cmake" ]; then

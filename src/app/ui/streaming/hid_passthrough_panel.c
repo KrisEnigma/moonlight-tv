@@ -5,6 +5,7 @@
 #include "ctm/ctm_state.h"
 #include "ctm/ctm_settings.h"
 #include "hid_passthrough/hid_passthrough_manager.h"
+#include "hid_passthrough/hid_pt_gamepad_match.h"
 #include "stream/session.h"
 
 #include "util/bus.h"
@@ -26,6 +27,8 @@ typedef struct {
     lv_obj_t *list;
     lv_obj_t *composite_row;
     lv_obj_t *composite_cb;
+    lv_obj_t *auto_plugin_row;
+    lv_obj_t *auto_plugin_cb;
     lv_obj_t *customize_panel;
     lv_obj_t *customize_title;
     lv_obj_t *latency_label;
@@ -38,6 +41,8 @@ typedef struct {
     lv_obj_t *haptics_row;
     lv_obj_t *haptics_label;
     lv_obj_t *haptics_slider;
+    lv_obj_t *battery_label;
+    lv_obj_t *audio_warning_label;
     lv_obj_t *reset_settings_btn;
     lv_obj_t *refresh_btn;
     lv_obj_t *close_btn;
@@ -47,7 +52,9 @@ typedef struct {
     void *on_close_userdata;
     lv_timer_t *refresh_timer;
     lv_obj_t *row_buttons[HID_PT_MAX_ROWS];
+    lv_obj_t *plug_buttons[HID_PT_MAX_ROWS];
     lv_obj_t *plug_labels[HID_PT_MAX_ROWS];
+    lv_obj_t *active_dropdown;
     int selected_index;
     char selected_key[96];
     int list_width;
@@ -75,6 +82,14 @@ static bool item_is_playstation_audio(const logical_device_t *item)
     }
     const char *kind = bridge_kind_for_item(item);
     return strcmp(kind, "ds5") == 0 || strcmp(kind, "ds4") == 0;
+}
+
+static bool item_is_bridgeable(const logical_device_t *item)
+{
+    if (!item) {
+        return false;
+    }
+    return strcmp(bridge_kind_for_item(item), "hid") != 0;
 }
 
 static bool selected_item_is_ds5(const hid_pt_panel_t *panel)
@@ -116,6 +131,12 @@ static void update_row_styles(hid_pt_panel_t *panel) {
 
 static void panel_update_status(hid_pt_panel_t *panel);
 static void update_device_options(hid_pt_panel_t *panel);
+static void panel_setup_focus_order(hid_pt_panel_t *panel);
+static void panel_select_device(hid_pt_panel_t *panel, int index);
+static lv_obj_t *panel_first_option_target(hid_pt_panel_t *panel);
+static void panel_focus_current_plug(hid_pt_panel_t *panel);
+static bool panel_is_plug_button(const hid_pt_panel_t *panel, lv_obj_t *target);
+static bool panel_is_option_control(const hid_pt_panel_t *panel, lv_obj_t *target);
 
 static void panel_request_close(hid_pt_panel_t *panel) {
     (void) panel;
@@ -128,25 +149,196 @@ static void back_btn_cb(lv_event_t *e) {
 
 static bool panel_item_needs_lrkey(lv_obj_t *obj)
 {
-    return lv_obj_has_class(obj, &lv_slider_class) || lv_obj_has_class(obj, &lv_dropdown_class);
+    return lv_obj_has_class(obj, &lv_slider_class);
 }
 
-static void row_focus_cb(lv_event_t *event)
+static bool panel_dropdown_is_open(hid_pt_panel_t *panel, lv_obj_t *target)
 {
-    hid_pt_panel_t *panel = lv_event_get_user_data(event);
-    if (!panel || lv_event_get_code(event) != LV_EVENT_FOCUSED) {
+    if (panel && panel->active_dropdown && lv_dropdown_is_open(panel->active_dropdown)) {
+        return true;
+    }
+    return target != NULL && lv_obj_has_class(target, &lv_dropdown_class) && lv_dropdown_is_open(target);
+}
+
+static void panel_close_dropdown(hid_pt_panel_t *panel, lv_obj_t *dropdown)
+{
+    if (!panel || !dropdown) {
         return;
     }
-    lv_obj_t *row = lv_event_get_target(event);
-    int index = (int) (intptr_t) lv_obj_get_user_data(row);
-    if (index < 0 || index >= g_devices.count) {
+    panel->active_dropdown = NULL;
+    lv_group_set_editing(panel->group, false);
+    if (lv_dropdown_is_open(dropdown)) {
+        lv_dropdown_close(dropdown);
+    }
+    lv_group_focus_obj(dropdown);
+}
+
+static void panel_select_device(hid_pt_panel_t *panel, int index)
+{
+    if (!panel || index < 0 || index >= g_devices.count) {
         return;
     }
     panel->selected_index = index;
     snprintf(panel->selected_key, sizeof(panel->selected_key), "%s", g_devices.items[index].key);
     update_row_styles(panel);
     update_device_options(panel);
-    lv_obj_scroll_to_view(row, LV_ANIM_ON);
+}
+
+static lv_obj_t *panel_first_option_target(hid_pt_panel_t *panel)
+{
+    if (!panel) {
+        return NULL;
+    }
+    if (selected_item_is_flydigi(panel) && panel->composite_row &&
+        !lv_obj_has_flag(panel->composite_row, LV_OBJ_FLAG_HIDDEN) && panel->composite_cb) {
+        return panel->composite_cb;
+    }
+    if (panel->customize_panel && !lv_obj_has_flag(panel->customize_panel, LV_OBJ_FLAG_HIDDEN)) {
+        if (panel->latency_slider) {
+            return panel->latency_slider;
+        }
+    }
+    return NULL;
+}
+
+static void panel_focus_current_plug(hid_pt_panel_t *panel)
+{
+    if (!panel || panel->selected_index < 0 || panel->selected_index >= HID_PT_MAX_ROWS) {
+        return;
+    }
+    if (panel->plug_buttons[panel->selected_index]) {
+        lv_group_focus_obj(panel->plug_buttons[panel->selected_index]);
+    }
+}
+
+static int panel_plug_button_index(const hid_pt_panel_t *panel, lv_obj_t *target)
+{
+    if (!panel || !target) {
+        return -1;
+    }
+    for (int i = 0; i < HID_PT_MAX_ROWS; ++i) {
+        if (panel->plug_buttons[i] == target) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void panel_focus_plug_at(hid_pt_panel_t *panel, int index)
+{
+    if (!panel || index < 0 || index >= HID_PT_MAX_ROWS || !panel->plug_buttons[index]) {
+        return;
+    }
+    panel_select_device(panel, index);
+    lv_group_focus_obj(panel->plug_buttons[index]);
+}
+
+static bool panel_is_plug_button(const hid_pt_panel_t *panel, lv_obj_t *target)
+{
+    return panel_plug_button_index(panel, target) >= 0;
+}
+
+static bool panel_is_option_control(const hid_pt_panel_t *panel, lv_obj_t *target)
+{
+    if (!panel || !target) {
+        return false;
+    }
+    return target == panel->composite_cb ||
+           target == panel->auto_plugin_cb ||
+           target == panel->latency_slider ||
+           target == panel->audio_dropdown ||
+           target == panel->speaker_slider ||
+           target == panel->headset_slider ||
+           target == panel->haptics_slider ||
+           (panel->haptics_row && lv_obj_get_parent(target) == panel->haptics_row) ||
+           target == panel->reset_settings_btn;
+}
+
+static void panel_setup_focus_order(hid_pt_panel_t *panel)
+{
+    if (!panel || !panel->group) {
+        return;
+    }
+    lv_group_remove_all_objs(panel->group);
+    for (int i = 0; i < g_devices.count && i < HID_PT_MAX_ROWS; ++i) {
+        if (panel->plug_buttons[i]) {
+            lv_group_add_obj(panel->group, panel->plug_buttons[i]);
+        }
+    }
+    if (panel->composite_cb) {
+        lv_group_add_obj(panel->group, panel->composite_cb);
+    }
+    if (panel->auto_plugin_cb) {
+        lv_group_add_obj(panel->group, panel->auto_plugin_cb);
+    }
+    if (panel->latency_slider) {
+        lv_group_add_obj(panel->group, panel->latency_slider);
+    }
+    if (panel->audio_dropdown) {
+        lv_group_add_obj(panel->group, panel->audio_dropdown);
+    }
+    if (panel->speaker_slider) {
+        lv_group_add_obj(panel->group, panel->speaker_slider);
+    }
+    if (panel->headset_slider) {
+        lv_group_add_obj(panel->group, panel->headset_slider);
+    }
+    if (panel->haptics_slider) {
+        lv_group_add_obj(panel->group, panel->haptics_slider);
+    }
+    if (panel->reset_settings_btn) {
+        lv_group_add_obj(panel->group, panel->reset_settings_btn);
+    }
+    if (panel->refresh_btn) {
+        lv_group_add_obj(panel->group, panel->refresh_btn);
+    }
+    if (panel->close_btn) {
+        lv_group_add_obj(panel->group, panel->close_btn);
+    }
+}
+
+static void plug_focus_cb(lv_event_t *event)
+{
+    hid_pt_panel_t *panel = lv_event_get_user_data(event);
+    if (!panel || lv_event_get_code(event) != LV_EVENT_FOCUSED) {
+        return;
+    }
+    int index = (int) (intptr_t) lv_obj_get_user_data(lv_event_get_target(event));
+    panel_select_device(panel, index);
+    lv_obj_scroll_to_view(panel->row_buttons[index], LV_ANIM_ON);
+}
+
+static void dropdown_arrow_preprocess_cb(lv_event_t *event)
+{
+    hid_pt_panel_t *panel = lv_event_get_user_data(event);
+    if (!panel || !panel->group || lv_event_get_code(event) != LV_EVENT_KEY) {
+        return;
+    }
+    lv_obj_t *target = lv_event_get_target(event);
+    if (!lv_obj_has_class(target, &lv_dropdown_class) || panel_dropdown_is_open(panel, target)) {
+        return;
+    }
+    const uint32_t key = lv_event_get_key(event);
+    switch (key) {
+        case LV_KEY_UP:
+            lv_group_focus_prev(panel->group);
+            lv_event_stop_processing(event);
+            return;
+        case LV_KEY_DOWN:
+            lv_group_focus_next(panel->group);
+            lv_event_stop_processing(event);
+            return;
+        case LV_KEY_LEFT:
+            panel_focus_current_plug(panel);
+            lv_event_stop_processing(event);
+            return;
+        case LV_KEY_RIGHT:
+            lv_group_focus_next(panel->group);
+            lv_event_stop_processing(event);
+            return;
+        default:
+            break;
+    }
 }
 
 static void control_key_cb(lv_event_t *event)
@@ -166,10 +358,12 @@ static void control_key_cb(lv_event_t *event)
                 lv_event_stop_processing(event);
                 return;
             }
-            if (lv_obj_has_class(target, &lv_dropdown_class) && lv_dropdown_is_open(target)) {
-                lv_dropdown_close(target);
-                lv_event_stop_processing(event);
-                return;
+            if (lv_obj_has_class(target, &lv_dropdown_class)) {
+                if (panel_dropdown_is_open(panel, target)) {
+                    panel_close_dropdown(panel, target);
+                    lv_event_stop_processing(event);
+                    return;
+                }
             }
             panel_request_close(panel);
             lv_event_stop_processing(event);
@@ -180,34 +374,78 @@ static void control_key_cb(lv_event_t *event)
                 lv_event_stop_processing(event);
                 return;
             }
-            if (lv_obj_has_class(target, &lv_dropdown_class) && !lv_dropdown_is_open(target)) {
+            if (lv_obj_has_class(target, &lv_dropdown_class) && !panel_dropdown_is_open(panel, target)) {
                 lv_dropdown_open(target);
+                panel->active_dropdown = target;
                 lv_group_set_editing(panel->group, true);
                 lv_event_stop_processing(event);
                 return;
             }
             return;
         case LV_KEY_LEFT:
-        case LV_KEY_RIGHT:
-            if (panel_item_needs_lrkey(target) && (editing || lv_obj_has_class(target, &lv_slider_class))) {
+            if (panel_dropdown_is_open(panel, target)) {
                 return;
             }
-            if (key == LV_KEY_RIGHT) {
-                lv_group_focus_next(panel->group);
-            } else {
-                lv_group_focus_prev(panel->group);
+            if (panel_item_needs_lrkey(target) && editing) {
+                return;
             }
+            if (panel_is_option_control(panel, target)) {
+                panel_focus_current_plug(panel);
+                lv_event_stop_processing(event);
+                return;
+            }
+            lv_group_focus_prev(panel->group);
+            lv_event_stop_processing(event);
+            return;
+        case LV_KEY_RIGHT:
+            if (panel_dropdown_is_open(panel, target)) {
+                return;
+            }
+            if (panel_item_needs_lrkey(target) && editing) {
+                return;
+            }
+            if (panel_is_plug_button(panel, target)) {
+                lv_obj_t *opt = panel_first_option_target(panel);
+                if (opt) {
+                    lv_group_focus_obj(opt);
+                }
+                lv_event_stop_processing(event);
+                return;
+            }
+            lv_group_focus_next(panel->group);
             lv_event_stop_processing(event);
             return;
         case LV_KEY_UP:
-            if (lv_obj_has_class(target, &lv_dropdown_class) && lv_dropdown_is_open(target)) {
+            if (panel_dropdown_is_open(panel, target)) {
+                return;
+            }
+            if (panel_is_plug_button(panel, target)) {
+                int idx = panel_plug_button_index(panel, target);
+                for (int j = idx - 1; j >= 0; --j) {
+                    if (panel->plug_buttons[j]) {
+                        panel_focus_plug_at(panel, j);
+                        break;
+                    }
+                }
+                lv_event_stop_processing(event);
                 return;
             }
             lv_group_focus_prev(panel->group);
             lv_event_stop_processing(event);
             return;
         case LV_KEY_DOWN:
-            if (lv_obj_has_class(target, &lv_dropdown_class) && lv_dropdown_is_open(target)) {
+            if (panel_dropdown_is_open(panel, target)) {
+                return;
+            }
+            if (panel_is_plug_button(panel, target)) {
+                int idx = panel_plug_button_index(panel, target);
+                for (int j = idx + 1; j < g_devices.count && j < HID_PT_MAX_ROWS; ++j) {
+                    if (panel->plug_buttons[j]) {
+                        panel_focus_plug_at(panel, j);
+                        break;
+                    }
+                }
+                lv_event_stop_processing(event);
                 return;
             }
             lv_group_focus_next(panel->group);
@@ -229,18 +467,6 @@ static void panel_key_cb(lv_event_t *event) {
     control_key_cb(event);
 }
 
-static void panel_attach_keys(lv_obj_t *obj, hid_pt_panel_t *panel)
-{
-    if (!obj || !panel) {
-        return;
-    }
-    lv_obj_add_event_cb(obj, control_key_cb, LV_EVENT_KEY, panel);
-    uint32_t child_cnt = lv_obj_get_child_cnt(obj);
-    for (uint32_t i = 0; i < child_cnt; ++i) {
-        panel_attach_keys(lv_obj_get_child(obj, i), panel);
-    }
-}
-
 static void composite_toggle_cb(lv_event_t *event) {
     hid_pt_panel_t *panel = lv_event_get_user_data(event);
     if (!panel || panel->selected_index < 0 || panel->selected_index >= g_devices.count) {
@@ -253,6 +479,21 @@ static void composite_toggle_cb(lv_event_t *event) {
     }
     settings->composite_passthrough = lv_obj_has_state(panel->composite_cb, LV_STATE_CHECKED);
     apply_settings_to_session(item);
+}
+
+static void auto_plugin_toggle_cb(lv_event_t *event)
+{
+    hid_pt_panel_t *panel = lv_event_get_user_data(event);
+    if (!panel || panel->selected_index < 0 || panel->selected_index >= g_devices.count) {
+        return;
+    }
+    logical_device_t *item = &g_devices.items[panel->selected_index];
+    tv_bridge_worker_settings_t *settings = settings_for_item(item);
+    if (!settings || !panel->auto_plugin_cb) {
+        return;
+    }
+    settings->auto_plugin = lv_obj_has_state(panel->auto_plugin_cb, LV_STATE_CHECKED);
+    hid_pt_sync_auto_plugin_pref(item);
 }
 
 static void update_latency_label(hid_pt_panel_t *panel)
@@ -289,6 +530,55 @@ static void update_haptics_label(hid_pt_panel_t *panel)
     }
     int pct = (int) lv_slider_get_value(panel->haptics_slider);
     lv_label_set_text_fmt(panel->haptics_label, locstr("Haptics strength — %d%% (default: 100%%)"), pct);
+}
+
+static void update_audio_warning(hid_pt_panel_t *panel)
+{
+    if (!panel || !panel->audio_warning_label) {
+        return;
+    }
+    logical_device_t *item = panel_selected_item(panel);
+    tv_bridge_worker_settings_t *settings = settings_for_item(item);
+    if (!settings || settings->audio_mode == TV_BRIDGE_AUDIO_AUTO) {
+        lv_obj_add_flag(panel->audio_warning_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_label_set_text(panel->audio_warning_label,
+                          locstr("Enabling the controller speaker may route game audio over Bluetooth (SBC). "
+                                 "Use Auto to keep game audio on HDMI."));
+        lv_obj_clear_flag(panel->audio_warning_label, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void update_battery_label(hid_pt_panel_t *panel)
+{
+    if (!panel || !panel->battery_label || !selected_item_is_ds5(panel)) {
+        if (panel && panel->battery_label) {
+            lv_obj_add_flag(panel->battery_label, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+    logical_device_t *item = panel_selected_item(panel);
+    if (!item) {
+        return;
+    }
+    int session_index = session_index_for_key(item->key);
+    ctm_controller_status_t st;
+    memset(&st, 0, sizeof(st));
+    if (session_index >= 0 && g_sessions[session_index].controller) {
+        ctm_controller_get_status(g_sessions[session_index].controller, &st);
+    }
+    if (st.battery_valid) {
+        int pct = (int)(st.battery_level * 10);
+        if (st.battery_status == 2) {
+            pct = 100;
+        }
+        const char *stat = st.battery_status == 2 ? locstr(" (full)") :
+                           st.battery_status == 1 ? locstr(" (charging)") : "";
+        lv_label_set_text_fmt(panel->battery_label, locstr("Battery: %d%%%s"), pct, stat);
+    } else {
+        lv_label_set_text(panel->battery_label, locstr("Battery: --"));
+    }
+    lv_obj_clear_flag(panel->battery_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void sync_customize_ui_from_settings(hid_pt_panel_t *panel)
@@ -342,6 +632,14 @@ static void sync_customize_ui_from_settings(hid_pt_panel_t *panel)
             lv_obj_add_flag(panel->haptics_row, LV_OBJ_FLAG_HIDDEN);
         }
     }
+    if (panel->auto_plugin_cb) {
+        if (settings->auto_plugin) {
+            lv_obj_add_state(panel->auto_plugin_cb, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(panel->auto_plugin_cb, LV_STATE_CHECKED);
+        }
+    }
+    update_audio_warning(panel);
 }
 
 static void customize_setting_changed(hid_pt_panel_t *panel)
@@ -367,6 +665,7 @@ static void customize_setting_changed(hid_pt_panel_t *panel)
         settings->haptics_gain_centi = (unsigned) lv_slider_get_value(panel->haptics_slider);
     }
     apply_settings_to_session(item);
+    update_audio_warning(panel);
 }
 
 static void latency_slider_cb(lv_event_t *event)
@@ -413,6 +712,30 @@ static void reset_settings_cb(lv_event_t *event)
     *settings = default_settings_for_item(item);
     sync_customize_ui_from_settings(panel);
     apply_settings_to_session(item);
+    hid_pt_sync_auto_plugin_pref(item);
+}
+
+static void update_auto_plugin_row(hid_pt_panel_t *panel)
+{
+    if (!panel || !panel->auto_plugin_row || !panel->auto_plugin_cb) {
+        return;
+    }
+    logical_device_t *item = panel_selected_item(panel);
+    bool show = item_is_bridgeable(item);
+    if (show) {
+        ui_record_for_item(item);
+        tv_bridge_worker_settings_t *settings = settings_for_item(item);
+        if (settings) {
+            if (settings->auto_plugin) {
+                lv_obj_add_state(panel->auto_plugin_cb, LV_STATE_CHECKED);
+            } else {
+                lv_obj_clear_state(panel->auto_plugin_cb, LV_STATE_CHECKED);
+            }
+        }
+        lv_obj_clear_flag(panel->auto_plugin_row, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(panel->auto_plugin_row, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void update_customize_panel(hid_pt_panel_t *panel)
@@ -432,6 +755,7 @@ static void update_customize_panel(hid_pt_panel_t *panel)
     } else {
         lv_obj_add_flag(panel->customize_panel, LV_OBJ_FLAG_HIDDEN);
     }
+    update_battery_label(panel);
 }
 
 static void update_composite_row(hid_pt_panel_t *panel) {
@@ -459,6 +783,7 @@ static void update_composite_row(hid_pt_panel_t *panel) {
 
 static void update_device_options(hid_pt_panel_t *panel)
 {
+    update_auto_plugin_row(panel);
     update_composite_row(panel);
     update_customize_panel(panel);
 }
@@ -469,10 +794,10 @@ static void row_clicked_cb(lv_event_t *event) {
     if (!panel || index < 0 || index >= g_devices.count) {
         return;
     }
-    panel->selected_index = index;
-    snprintf(panel->selected_key, sizeof(panel->selected_key), "%s", g_devices.items[index].key);
-    update_row_styles(panel);
-    update_device_options(panel);
+    panel_select_device(panel, index);
+    if (panel->plug_buttons[index]) {
+        lv_group_focus_obj(panel->plug_buttons[index]);
+    }
 }
 
 static void plug_button_cb(lv_event_t *event) {
@@ -490,9 +815,21 @@ static void plug_button_cb(lv_event_t *event) {
             panel_update_status(panel);
             return;
         }
+        if (panel->session) {
+            stream_input_t *input = session_get_input(panel->session);
+            if (input) {
+                hid_pt_moonlight_exclude(input, item);
+            }
+        }
     } else {
         stop_session(item->key);
         ctm_clear_plug_error();
+        if (panel->session) {
+            stream_input_t *input = session_get_input(panel->session);
+            if (input) {
+                hid_pt_moonlight_restore(input, item);
+            }
+        }
     }
 
     item->plugged = requested_state;
@@ -515,6 +852,7 @@ static void plug_button_cb(lv_event_t *event) {
 static void render_device_list(hid_pt_panel_t *panel) {
     lv_obj_clean(panel->list);
     memset(panel->row_buttons, 0, sizeof(panel->row_buttons));
+    memset(panel->plug_buttons, 0, sizeof(panel->plug_buttons));
     memset(panel->plug_labels, 0, sizeof(panel->plug_labels));
 
     if (g_devices.count == 0) {
@@ -527,23 +865,26 @@ static void render_device_list(hid_pt_panel_t *panel) {
 
     const int row_h = LV_DPX(60);
     const int gap = LV_DPX(8);
-    const int row_w = panel->list_width > 0 ? panel->list_width : LV_PCT(100);
     const int button_w = LV_DPX(112);
-    int y = 0;
+
+    lv_obj_set_flex_flow(panel->list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(panel->list, gap, 0);
 
     for (int i = 0; i < g_devices.count && i < HID_PT_MAX_ROWS; ++i) {
         const logical_device_t *item = &g_devices.items[i];
         lv_obj_t *row = lv_obj_create(panel->list);
         panel->row_buttons[i] = row;
-        lv_obj_set_pos(row, 0, y);
-        lv_obj_set_size(row, row_w, row_h);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, row_h);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICK_FOCUSABLE);
         lv_obj_add_event_cb(row, row_clicked_cb, LV_EVENT_CLICKED, panel);
-        lv_obj_add_event_cb(row, row_focus_cb, LV_EVENT_FOCUSED, panel);
-        lv_obj_add_event_cb(row, control_key_cb, LV_EVENT_KEY, panel);
         lv_obj_set_user_data(row, (void *) (intptr_t) i);
         style_row(row, i == panel->selected_index);
-        lv_group_add_obj(panel->group, row);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_hor(row, LV_DPX(14), 0);
+        lv_obj_set_style_pad_gap(row, LV_DPX(8), 0);
 
         lv_obj_t *name = lv_label_create(row);
         char display_name[128];
@@ -553,29 +894,34 @@ static void render_device_list(hid_pt_panel_t *panel) {
                      flydigi_is_xinput_evdev_only(item) ? "XInput" :
                      flydigi_is_xinput_mode(item) ? "XInput" : "D-Input");
         }
+        {
+            tv_bridge_worker_settings_t *dev_settings = settings_for_item(&g_devices.items[i]);
+            if (dev_settings && dev_settings->auto_plugin) {
+                size_t len = strlen(display_name);
+                snprintf(display_name + len, sizeof(display_name) - len, " [A]");
+            }
+        }
         lv_label_set_text(name, display_name);
         lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(name, row_w - button_w - LV_DPX(30));
-        lv_obj_set_pos(name, LV_DPX(16), LV_DPX(20));
+        lv_obj_set_flex_grow(name, 1);
 
         lv_obj_t *plug_btn = lv_btn_create(row);
+        panel->plug_buttons[i] = plug_btn;
         lv_obj_set_size(plug_btn, button_w, LV_DPX(38));
-        lv_obj_align(plug_btn, LV_ALIGN_RIGHT_MID, LV_DPX(-14), 0);
         lv_obj_set_style_radius(plug_btn, LV_DPX(6), 0);
         lv_obj_set_style_bg_color(plug_btn, item->plugged ? lv_color_hex(0x7f1d1d) : lv_color_hex(0x0f766e), 0);
         lv_obj_set_style_bg_color(plug_btn, item->plugged ? lv_color_hex(0x991b1b) : lv_color_hex(0x0d9488),
                                   LV_STATE_PRESSED);
         lv_obj_add_event_cb(plug_btn, plug_button_cb, LV_EVENT_CLICKED, panel);
+        lv_obj_add_event_cb(plug_btn, plug_focus_cb, LV_EVENT_FOCUSED, panel);
         lv_obj_add_event_cb(plug_btn, control_key_cb, LV_EVENT_KEY, panel);
         lv_obj_set_user_data(plug_btn, (void *) (intptr_t) i);
-        lv_group_add_obj(panel->group, plug_btn);
 
         panel->plug_labels[i] = lv_label_create(plug_btn);
         lv_label_set_text(panel->plug_labels[i], item->plugged ? locstr("Plug out") : locstr("Plug in"));
         lv_obj_center(panel->plug_labels[i]);
-
-        y += row_h + gap;
     }
+    panel_setup_focus_order(panel);
 }
 
 static void panel_update_status(hid_pt_panel_t *panel) {
@@ -627,9 +973,15 @@ static void focus_initial_target(hid_pt_panel_t *panel) {
     if (!panel || !panel->group) {
         return;
     }
+    if (panel->selected_index >= 0 && panel->selected_index < HID_PT_MAX_ROWS &&
+        panel->plug_buttons[panel->selected_index]) {
+        lv_group_focus_obj(panel->plug_buttons[panel->selected_index]);
+        return;
+    }
     for (int i = 0; i < g_devices.count && i < HID_PT_MAX_ROWS; ++i) {
-        if (panel->row_buttons[i]) {
-            lv_group_focus_obj(panel->row_buttons[i]);
+        if (panel->plug_buttons[i]) {
+            panel_select_device(panel, i);
+            lv_group_focus_obj(panel->plug_buttons[i]);
             return;
         }
     }
@@ -733,7 +1085,7 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     panel->on_close_userdata = userdata;
     panel->selected_index = -1;
     panel->group = lv_group_create();
-    lv_group_set_wrap(panel->group, true);
+    lv_group_set_wrap(panel->group, false);
 
     lv_obj_t *cont = lv_obj_create(parent);
     lv_obj_remove_style_all(cont);
@@ -745,7 +1097,8 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
 
     lv_obj_t *sheet = lv_obj_create(cont);
     panel->sheet = sheet;
-    lv_obj_set_size(sheet, LV_DPX(680), LV_DPX(520));
+    lv_obj_set_size(sheet, LV_DPX(760), LV_PCT(85));
+    lv_obj_set_style_min_height(sheet, LV_DPX(400), 0);
     lv_obj_center(sheet);
     lv_obj_set_style_max_width(sheet, LV_PCT(92), 0);
     lv_obj_set_style_max_height(sheet, LV_PCT(88), 0);
@@ -783,7 +1136,6 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     lv_obj_align(refresh_btn, LV_ALIGN_RIGHT_MID, LV_DPX(-98), 0);
     lv_obj_add_event_cb(refresh_btn, refresh_button_cb, LV_EVENT_CLICKED, panel);
     lv_obj_add_event_cb(refresh_btn, control_key_cb, LV_EVENT_KEY, panel);
-    lv_group_add_obj(panel->group, refresh_btn);
     lv_obj_t *refresh_lbl = lv_label_create(refresh_btn);
     lv_label_set_text(refresh_lbl, locstr("Refresh"));
     lv_obj_center(refresh_lbl);
@@ -794,7 +1146,6 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_add_event_cb(close_btn, back_btn_cb, LV_EVENT_CLICKED, panel);
     lv_obj_add_event_cb(close_btn, control_key_cb, LV_EVENT_KEY, panel);
-    lv_group_add_obj(panel->group, close_btn);
     lv_obj_t *close_lbl = lv_label_create(close_btn);
     lv_label_set_text(close_lbl, locstr("Close"));
     lv_obj_center(close_lbl);
@@ -821,41 +1172,88 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     lv_label_set_long_mode(panel->error_label, LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(panel->error_label, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *devices_title = lv_label_create(sheet);
+    lv_obj_t *body_row = lv_obj_create(sheet);
+    lv_obj_remove_style_all(body_row);
+    lv_obj_set_width(body_row, LV_PCT(100));
+    lv_obj_set_flex_grow(body_row, 1);
+    lv_obj_set_style_bg_opa(body_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(body_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_flex_flow(body_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_all(body_row, LV_DPX(8), 0);
+    lv_obj_set_style_pad_gap(body_row, LV_DPX(8), 0);
+    lv_obj_clear_flag(body_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *left_pane = lv_obj_create(body_row);
+    lv_obj_remove_style_all(left_pane);
+    lv_obj_set_height(left_pane, LV_PCT(100));
+    lv_obj_set_flex_grow(left_pane, 4);
+    lv_obj_set_style_bg_opa(left_pane, LV_OPA_TRANSP, 0);
+    lv_obj_set_flex_flow(left_pane, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(left_pane, 0, 0);
+
+    lv_obj_t *devices_title = lv_label_create(left_pane);
     lv_label_set_text(devices_title, locstr("Devices"));
     lv_obj_set_style_text_color(devices_title, lv_color_hex(0xf5f8fa), 0);
-    lv_obj_set_style_pad_left(devices_title, LV_DPX(18), 0);
-    lv_obj_set_style_pad_top(devices_title, LV_DPX(14), 0);
+    lv_obj_set_style_pad_left(devices_title, LV_DPX(10), 0);
+    lv_obj_set_style_pad_top(devices_title, LV_DPX(4), 0);
 
-    panel->composite_row = lv_obj_create(sheet);
+    panel->list = lv_obj_create(left_pane);
+    lv_obj_set_width(panel->list, LV_PCT(100));
+    lv_obj_set_flex_grow(panel->list, 1);
+    lv_obj_set_style_bg_opa(panel->list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(panel->list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(panel->list, LV_DPX(6), 0);
+    lv_obj_add_flag(panel->list, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *right_pane = lv_obj_create(body_row);
+    lv_obj_remove_style_all(right_pane);
+    lv_obj_set_height(right_pane, LV_PCT(100));
+    lv_obj_set_flex_grow(right_pane, 6);
+    lv_obj_set_style_bg_color(right_pane, lv_color_hex(0x0e1820), 0);
+    lv_obj_set_style_bg_opa(right_pane, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(right_pane, LV_DPX(8), 0);
+    lv_obj_set_style_border_width(right_pane, 1, 0);
+    lv_obj_set_style_border_color(right_pane, lv_color_hex(0x2c3d49), 0);
+    lv_obj_set_flex_flow(right_pane, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(right_pane, LV_DPX(12), 0);
+    lv_obj_add_flag(right_pane, LV_OBJ_FLAG_SCROLLABLE);
+
+    panel->composite_row = lv_obj_create(right_pane);
     lv_obj_remove_style_all(panel->composite_row);
     lv_obj_set_width(panel->composite_row, LV_PCT(100));
     lv_obj_set_height(panel->composite_row, LV_DPX(44));
-    lv_obj_set_style_pad_left(panel->composite_row, LV_DPX(18), 0);
     lv_obj_add_flag(panel->composite_row, LV_OBJ_FLAG_HIDDEN);
     panel->composite_cb = lv_checkbox_create(panel->composite_row);
     lv_checkbox_set_text(panel->composite_cb, locstr("Recognize as native Flydigi on PC"));
     lv_obj_set_style_text_color(panel->composite_cb, lv_color_hex(0xdbe4ea), 0);
     lv_obj_align(panel->composite_cb, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_add_event_cb(panel->composite_cb, composite_toggle_cb, LV_EVENT_VALUE_CHANGED, panel);
-    lv_group_add_obj(panel->group, panel->composite_cb);
+    lv_obj_add_event_cb(panel->composite_cb, control_key_cb, LV_EVENT_KEY, panel);
 
-    panel->list = lv_obj_create(sheet);
-    lv_obj_set_width(panel->list, LV_PCT(100));
-    lv_obj_set_height(panel->list, LV_DPX(168));
-    lv_obj_set_style_bg_opa(panel->list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_opa(panel->list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_pad_all(panel->list, LV_DPX(12), 0);
-    lv_obj_add_flag(panel->list, LV_OBJ_FLAG_SCROLLABLE);
-    panel->list_width = lv_obj_get_width(panel->list) - LV_DPX(24);
-    if (panel->list_width < LV_DPX(200)) {
-        panel->list_width = LV_DPX(520);
-    }
+    panel->auto_plugin_row = lv_obj_create(right_pane);
+    lv_obj_remove_style_all(panel->auto_plugin_row);
+    lv_obj_set_width(panel->auto_plugin_row, LV_PCT(100));
+    lv_obj_set_height(panel->auto_plugin_row, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(panel->auto_plugin_row, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(panel->auto_plugin_row, LV_DPX(4), 0);
+    lv_obj_add_flag(panel->auto_plugin_row, LV_OBJ_FLAG_HIDDEN);
+    panel->auto_plugin_cb = lv_checkbox_create(panel->auto_plugin_row);
+    lv_checkbox_set_text(panel->auto_plugin_cb,
+                         locstr("Auto-Plugin (connect via HID Passthrough on next stream)"));
+    lv_obj_set_style_text_color(panel->auto_plugin_cb, lv_color_hex(0xdbe4ea), 0);
+    lv_obj_set_width(panel->auto_plugin_cb, LV_PCT(100));
+    lv_obj_add_event_cb(panel->auto_plugin_cb, auto_plugin_toggle_cb, LV_EVENT_VALUE_CHANGED, panel);
+    lv_obj_add_event_cb(panel->auto_plugin_cb, control_key_cb, LV_EVENT_KEY, panel);
+    lv_obj_t *auto_plugin_hint = lv_label_create(panel->auto_plugin_row);
+    lv_label_set_text(auto_plugin_hint,
+                      locstr("When unchecked, the controller uses normal Moonlight emulation until you Plug in."));
+    lv_label_set_long_mode(auto_plugin_hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(auto_plugin_hint, LV_PCT(100));
+    lv_obj_set_style_text_color(auto_plugin_hint, lv_color_hex(0x94a3b8), 0);
 
-    panel->customize_panel = lv_obj_create(sheet);
+    panel->customize_panel = lv_obj_create(right_pane);
     lv_obj_remove_style_all(panel->customize_panel);
     lv_obj_set_width(panel->customize_panel, LV_PCT(100));
-    lv_obj_set_height(panel->customize_panel, LV_DPX(260));
     lv_obj_set_flex_grow(panel->customize_panel, 1);
     lv_obj_set_style_bg_color(panel->customize_panel, lv_color_hex(0x152028), 0);
     lv_obj_set_style_bg_opa(panel->customize_panel, LV_OPA_COVER, 0);
@@ -872,13 +1270,17 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     lv_label_set_text(panel->customize_title, locstr("Controller settings"));
     lv_obj_set_style_text_color(panel->customize_title, lv_color_hex(0xf5f8fa), 0);
 
+    panel->battery_label = lv_label_create(panel->customize_panel);
+    lv_obj_set_style_text_color(panel->battery_label, lv_color_hex(0x7dd3fc), 0);
+    lv_obj_add_flag(panel->battery_label, LV_OBJ_FLAG_HIDDEN);
+
     panel->latency_label = lv_label_create(panel->customize_panel);
     lv_obj_set_style_text_color(panel->latency_label, lv_color_hex(0xdbe4ea), 0);
     panel->latency_slider = lv_slider_create(panel->customize_panel);
     lv_slider_set_range(panel->latency_slider, DS_LATENCY_MIN, DS_LATENCY_MAX);
     lv_obj_set_width(panel->latency_slider, LV_PCT(100));
     lv_obj_add_event_cb(panel->latency_slider, latency_slider_cb, LV_EVENT_VALUE_CHANGED, panel);
-    lv_group_add_obj(panel->group, panel->latency_slider);
+    lv_obj_add_event_cb(panel->latency_slider, control_key_cb, LV_EVENT_KEY, panel);
 
     lv_obj_t *audio_lbl = lv_label_create(panel->customize_panel);
     lv_label_set_text(audio_lbl, locstr("Audio output"));
@@ -888,7 +1290,15 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
                             locstr("Auto (game decides)\nOff\nController speaker\nHeadphone jack\nSpeaker + jack"));
     lv_obj_set_width(panel->audio_dropdown, LV_PCT(100));
     lv_obj_add_event_cb(panel->audio_dropdown, audio_dropdown_cb, LV_EVENT_VALUE_CHANGED, panel);
-    lv_group_add_obj(panel->group, panel->audio_dropdown);
+    lv_obj_add_event_cb(panel->audio_dropdown, control_key_cb, LV_EVENT_KEY, panel);
+    lv_obj_add_event_cb(panel->audio_dropdown, dropdown_arrow_preprocess_cb,
+                        LV_EVENT_KEY | LV_EVENT_PREPROCESS, panel);
+
+    panel->audio_warning_label = lv_label_create(panel->customize_panel);
+    lv_label_set_long_mode(panel->audio_warning_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(panel->audio_warning_label, LV_PCT(100));
+    lv_obj_set_style_text_color(panel->audio_warning_label, lv_color_hex(0xfbbf24), 0);
+    lv_obj_add_flag(panel->audio_warning_label, LV_OBJ_FLAG_HIDDEN);
 
     panel->speaker_label = lv_label_create(panel->customize_panel);
     lv_obj_set_style_text_color(panel->speaker_label, lv_color_hex(0xdbe4ea), 0);
@@ -896,7 +1306,7 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     lv_slider_set_range(panel->speaker_slider, 0, DS_VOLUME_MAX);
     lv_obj_set_width(panel->speaker_slider, LV_PCT(100));
     lv_obj_add_event_cb(panel->speaker_slider, speaker_slider_cb, LV_EVENT_VALUE_CHANGED, panel);
-    lv_group_add_obj(panel->group, panel->speaker_slider);
+    lv_obj_add_event_cb(panel->speaker_slider, control_key_cb, LV_EVENT_KEY, panel);
 
     panel->headset_label = lv_label_create(panel->customize_panel);
     lv_obj_set_style_text_color(panel->headset_label, lv_color_hex(0xdbe4ea), 0);
@@ -904,7 +1314,7 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     lv_slider_set_range(panel->headset_slider, 0, DS_VOLUME_MAX);
     lv_obj_set_width(panel->headset_slider, LV_PCT(100));
     lv_obj_add_event_cb(panel->headset_slider, headset_slider_cb, LV_EVENT_VALUE_CHANGED, panel);
-    lv_group_add_obj(panel->group, panel->headset_slider);
+    lv_obj_add_event_cb(panel->headset_slider, control_key_cb, LV_EVENT_KEY, panel);
 
     panel->haptics_row = lv_obj_create(panel->customize_panel);
     lv_obj_remove_style_all(panel->haptics_row);
@@ -918,17 +1328,17 @@ lv_obj_t *hid_passthrough_panel_create(lv_obj_t *parent, session_t *session,
     lv_slider_set_range(panel->haptics_slider, 0, DS_HAPTICS_MAX);
     lv_obj_set_width(panel->haptics_slider, LV_PCT(100));
     lv_obj_add_event_cb(panel->haptics_slider, haptics_slider_cb, LV_EVENT_VALUE_CHANGED, panel);
-    lv_group_add_obj(panel->group, panel->haptics_slider);
+    lv_obj_add_event_cb(panel->haptics_slider, control_key_cb, LV_EVENT_KEY, panel);
 
     panel->reset_settings_btn = lv_btn_create(panel->customize_panel);
     lv_obj_set_size(panel->reset_settings_btn, LV_DPX(180), LV_DPX(40));
     lv_obj_add_event_cb(panel->reset_settings_btn, reset_settings_cb, LV_EVENT_CLICKED, panel);
-    lv_group_add_obj(panel->group, panel->reset_settings_btn);
+    lv_obj_add_event_cb(panel->reset_settings_btn, control_key_cb, LV_EVENT_KEY, panel);
     lv_obj_t *reset_lbl = lv_label_create(panel->reset_settings_btn);
     lv_label_set_text(reset_lbl, locstr("Reset to defaults"));
     lv_obj_center(reset_lbl);
 
-    panel_attach_keys(panel->customize_panel, panel);
+    panel_setup_focus_order(panel);
 
     panel->container = cont;
     lv_obj_add_event_cb(cont, panel_delete_cb, LV_EVENT_DELETE, panel);

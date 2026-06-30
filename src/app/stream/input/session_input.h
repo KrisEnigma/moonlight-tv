@@ -45,6 +45,7 @@ typedef struct stream_input_t {
     int pointerGestureStartY;
     bool view_only, no_sdl_mouse;
     bool hid_passthrough;
+    uint16_t moonlightExcludedMask;
     uint8_t stick_deadzone;
     session_input_vmouse_t vmouse;
 #if FEATURE_INPUT_EVMOUSE
@@ -71,6 +72,8 @@ void session_input_screen_keyboard_closed(stream_input_t *input);
 void stream_input_flush_pressed_keys(stream_input_t *input);
 
 void stream_input_send_gamepad_arrive(stream_input_t *input, app_gamepad_state_t *gamepad);
+
+void stream_input_send_gamepad_remove(stream_input_t *input, app_gamepad_state_t *gamepad);
 
 void stream_input_handle_key(stream_input_t *input, const SDL_KeyboardEvent *event);
 

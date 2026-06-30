@@ -28,7 +28,9 @@ Write-Host ""
 # Mount the project and run the build
 $ScriptPath = Join-Path $PSScriptRoot "docker_build_inner.sh"
 # sed removes CRLF (Windows line endings) for Linux compatibility
-docker run --rm -v "${ProjectRoot}:/build" -v "${ScriptPath}:/docker_build.sh" -w /build ubuntu:22.04 bash -c "sed 's/\r$//' /docker_build.sh | bash"
+docker run --rm -e CI=1 -e DOCKER_SKIP_SUBMODULES=1 `
+    -v "${ProjectRoot}:/build" -v "${ScriptPath}:/docker_build.sh" -w /build ubuntu:22.04 `
+    bash -c "sed 's/\r$//' /docker_build.sh | bash"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""

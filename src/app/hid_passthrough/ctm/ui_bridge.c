@@ -6,6 +6,9 @@
 
 #include "ctm_state.h"
 #include "ctm_bridge_protocol.h"
+#include "hid_pt_device_prefs.h"
+#include "hid_pt_gamepad_match.h"
+#include "stream/input/session_input.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -35,6 +38,7 @@ tv_bridge_worker_settings_t default_settings_for_item(const logical_device_t *it
     settings.ds5_patch_low_nibble = 0xd;
     settings.ds5_patch2_high_nibble = 0xf;
     settings.ds5_patch2_low_nibble = 0x7;
+    settings.auto_plugin = false;
 
     if (is_flydigi_logical_device(item) ||
         (item && item->usb_busid[0] && is_flydigi_usb_busid(item->usb_busid)) ||
@@ -49,9 +53,13 @@ tv_bridge_worker_settings_t default_settings_for_item(const logical_device_t *it
         settings.kind = TV_BRIDGE_KIND_DS5;
         settings.headset_volume_percent = 0x4d;
         settings.speaker_volume_percent = 0x41;
+        settings.block_bt_audio_sink = true;
     } else if (strcmp(kind, "ds4") == 0) {
         settings.kind = TV_BRIDGE_KIND_DS4;
         settings.haptics_gain_centi = 0;
+    }
+    if (item) {
+        settings.auto_plugin = hid_pt_prefs_auto_plugin_for_logical(item);
     }
     return settings;
 }
@@ -89,6 +97,19 @@ void apply_settings_to_session(const logical_device_t *item)
     int session = session_index_for_key(item->key);
     if (session >= 0 && g_sessions[session].controller) {
         ctm_controller_set_settings(g_sessions[session].controller, settings);
+    }
+}
+
+void hid_pt_sync_auto_plugin_pref(const logical_device_t *item)
+{
+    tv_bridge_worker_settings_t *settings = settings_for_item(item);
+    if (!item || !settings) {
+        return;
+    }
+    char stable_id[96];
+    hid_pt_stable_id_for_logical(item, stable_id, sizeof(stable_id));
+    if (stable_id[0]) {
+        hid_pt_prefs_set_auto_plugin(stable_id, settings->auto_plugin);
     }
 }
 
@@ -817,7 +838,7 @@ static bool autoplug_node_is_peripheral(const logical_device_t *item)
                                      g_scan.devices[idx].usage);
 }
 
-void hid_pt_autoplug_reconcile(void)
+void hid_pt_autoplug_reconcile(stream_input_t *input)
 {
     autoplug_reap_vanished();   /* drop stale plugged state for devices that left */
     autoplug_prune();           /* drop bookkeeping for devices that left */
@@ -843,6 +864,10 @@ void hid_pt_autoplug_reconcile(void)
             autoplug_mark_done(item->key);
             continue;
         }
+        tv_bridge_worker_settings_t *settings = settings_for_item(item);
+        if (!settings || !settings->auto_plugin) {
+            continue;
+        }
         const char *kind = bridge_kind_for_item(item);
         if (strcmp(kind, "hid") == 0) {
             continue;   /* only known controllers (ds5/ds4/xbox/puck), never generic HID */
@@ -863,6 +888,9 @@ void hid_pt_autoplug_reconcile(void)
             set_plug_key(item->key, true);
             e->state = AUTOPLUG_DONE;
             e->fail_count = 0;
+            if (input) {
+                hid_pt_moonlight_exclude(input, item);
+            }
             log_append("auto-plugged %s (%s)", item->name, kind);
             /* success is cheap; keep going so a second controller plugs the same tick */
         } else {

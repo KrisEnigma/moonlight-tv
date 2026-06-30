@@ -20,6 +20,8 @@
 
 #include "ctm_controller.h"   /* controller lifecycle + ctm_settings types */
 
+struct stream_input_t;
+
 /* ---- HID ioctl fallbacks (sysroot may predate these) -------------------- */
 #ifndef HIDIOCGRAWINFO
 struct hidraw_devinfo {
@@ -91,6 +93,7 @@ typedef struct {
     int device_indices[MAX_DEVICES];
     int device_count;
     bool plugged;
+    int8_t moonlight_gs_id; /* cached Moonlight slot after match; -1 = unknown */
 } logical_device_t;
 
 typedef struct {
@@ -282,6 +285,7 @@ tv_bridge_worker_settings_t default_settings_for_item(const logical_device_t *it
 ui_device_settings_t *ui_record_for_item(const logical_device_t *item);
 tv_bridge_worker_settings_t *settings_for_item(const logical_device_t *item);
 void apply_settings_to_session(const logical_device_t *item);
+void hid_pt_sync_auto_plugin_pref(const logical_device_t *item);
 int run_child_wait(char *const argv[]);
 void stop_sniff_once(const char *mac);
 void *stop_sniff_worker(void *arg);
@@ -301,7 +305,7 @@ bool plug_in_node(logical_device_t *item, int scan_index);   /* bridge ONE chose
 
 /* Auto-plug reconcile: bridge every connected, recognized controller that is not
  * already plugged and is still auto-managed. Idempotent; cheap when nothing new. */
-void hid_pt_autoplug_reconcile(void);
+void hid_pt_autoplug_reconcile(struct stream_input_t *input);
 /* Mark a device key as user-/manager-owned so the reconcile leaves it alone (e.g.
  * after a manual plug-out). Cleared when the device disconnects. */
 void autoplug_mark_done(const char *key);

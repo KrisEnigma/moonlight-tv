@@ -11,6 +11,12 @@
 #include "stream/input/session_virt_mouse.h"
 #include "logging.h"
 
+#if defined(TARGET_WEBOS)
+#include "hid_passthrough/hid_pt_gamepad_match.h"
+#include "hid_passthrough/hid_pt_device_prefs.h"
+#include "hid_passthrough/hid_passthrough_manager.h"
+#endif
+
 #define QUIT_BUTTONS (PLAY_FLAG | BACK_FLAG | LB_FLAG | RB_FLAG)
 #define GAMEPAD_COMBO_VMOUSE (LB_FLAG | RS_CLK_FLAG)
 #define GAMEPAD_COMBO_KEYBOARD (RB_FLAG | RS_CLK_FLAG)
@@ -32,12 +38,28 @@ static bool vmouse_intercepted(stream_input_t *input, const app_gamepad_state_t 
 
 static bool filter_deadzone_2axis(stream_input_t *input, short *x, short *y);
 
-static void stream_input_send_gamepad_remove(stream_input_t *input, app_gamepad_state_t *gamepad);
-
 static void stream_input_send_unannounced_gamepads(stream_input_t *input);
 
-static bool stream_input_moonlight_gamepad_enabled(const stream_input_t *input) {
+static bool stream_input_gamepad_sends_moonlight(const stream_input_t *input,
+                                                 const app_gamepad_state_t *gamepad) {
+    if (input->view_only || gamepad == NULL) {
+        return false;
+    }
+#if defined(TARGET_WEBOS)
+    return !hid_pt_gamepad_is_moonlight_excluded(input, gamepad);
+#else
+    (void) input;
     return !input->hid_passthrough;
+#endif
+}
+
+static uint16_t stream_input_moonlight_active_mask(const stream_input_t *input)
+{
+    uint16_t mask = (uint16_t) input->input->activeGamepadMask;
+#if defined(TARGET_WEBOS)
+    mask &= ~input->moonlightExcludedMask;
+#endif
+    return mask;
 }
 
 void stream_input_handle_cbutton(stream_input_t *input, const SDL_ControllerButtonEvent *event) {
@@ -157,7 +179,7 @@ void stream_input_handle_cbutton(stream_input_t *input, const SDL_ControllerButt
         }
     }
 
-    if (input->view_only || !stream_input_moonlight_gamepad_enabled(input)) {
+    if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
         return;
     }
     LiSendMultiControllerEvent(gamepad->gs_id, input->input->activeGamepadMask, gamepad->buttons, gamepad->leftTrigger,
@@ -212,7 +234,7 @@ void stream_input_handle_caxis(stream_input_t *input, const SDL_ControllerAxisEv
         vmouse_set_trigger(&input->vmouse, gamepad->leftTrigger, gamepad->rightTrigger);
     }
 
-    if (input->view_only || !stream_input_moonlight_gamepad_enabled(input)) {
+    if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
         return;
     }
 
@@ -232,7 +254,7 @@ void stream_input_handle_csensor(stream_input_t *input, const SDL_ControllerSens
     if (gamepad == NULL) {
         return;
     }
-    if (input->view_only || !stream_input_moonlight_gamepad_enabled(input)) {
+    if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
         return;
     }
     switch (event->sensor) {
@@ -268,7 +290,7 @@ void stream_input_handle_ctouchpad(stream_input_t *input, const SDL_ControllerTo
     if (gamepad == NULL) {
         return;
     }
-    if (input->view_only || !stream_input_moonlight_gamepad_enabled(input)) {
+    if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
         return;
     }
     if (event->touchpad != 0) {
@@ -303,16 +325,13 @@ void stream_input_handle_cdevice(stream_input_t *input, const SDL_ControllerDevi
     if (gamepad == NULL) {
         return;
     }
-    if (input->view_only || !stream_input_moonlight_gamepad_enabled(input)) {
+    if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
         return;
     }
     stream_input_send_gamepad_remove(input, gamepad);
 }
 
 void stream_input_handle_jdevice(stream_input_t *input, const SDL_JoyDeviceEvent *event) {
-    if (!stream_input_moonlight_gamepad_enabled(input)) {
-        return;
-    }
     app_gamepad_state_t *gamepad = NULL;
     if (event->type == SDL_JOYDEVICEADDED) {
 #if SDL_VERSION_ATLEAST(2, 0, 6)
@@ -325,6 +344,16 @@ void stream_input_handle_jdevice(stream_input_t *input, const SDL_JoyDeviceEvent
         if (gamepad == NULL || input->view_only) {
             return;
         }
+#if defined(TARGET_WEBOS)
+        if (hid_pt_prefs_auto_plugin_for_gamepad(gamepad)) {
+            hid_passthrough_manager_t *mgr = session_get_hid_passthrough(input->session);
+            if (mgr != NULL && hid_passthrough_manager_active(mgr)) {
+                hid_passthrough_manager_rescan(mgr);
+                hid_passthrough_manager_reconcile(mgr, input);
+            }
+            return;
+        }
+#endif
         stream_input_send_gamepad_arrive(input, gamepad);
 #else
         stream_input_send_unannounced_gamepads(input);
@@ -334,12 +363,15 @@ void stream_input_handle_jdevice(stream_input_t *input, const SDL_JoyDeviceEvent
         if (gamepad == NULL || input->view_only) {
             return;
         }
+        if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
+            return;
+        }
         stream_input_send_gamepad_remove(input, gamepad);
     }
 }
 
 void stream_input_send_gamepad_arrive(stream_input_t *input, app_gamepad_state_t *gamepad) {
-    if (!stream_input_moonlight_gamepad_enabled(input)) {
+    if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
         return;
     }
     if (input->announcedGamepadMask & (1 << gamepad->gs_id)) {
@@ -405,20 +437,22 @@ void stream_input_send_gamepad_arrive(stream_input_t *input, app_gamepad_state_t
         commons_log_info("Input", "  controller capability: RGB LED");
     }
 #endif
-    LiSendControllerArrivalEvent(gamepad->gs_id, input->input->activeGamepadMask, type, 0xFFFFFFFF, capabilities);
+    LiSendControllerArrivalEvent(gamepad->gs_id, stream_input_moonlight_active_mask(input), type, 0xFFFFFFFF,
+                                 capabilities);
 }
 
-static void stream_input_send_gamepad_remove(stream_input_t *input, app_gamepad_state_t *gamepad) {
-    if (!stream_input_moonlight_gamepad_enabled(input)) {
+void stream_input_send_gamepad_remove(stream_input_t *input, app_gamepad_state_t *gamepad) {
+    if (input->view_only || gamepad == NULL) {
         return;
     }
     if ((input->announcedGamepadMask & (1 << gamepad->gs_id)) == 0) {
         return;
     }
     input->announcedGamepadMask &= ~(1 << gamepad->gs_id);
-    short activeGamepadMask = input->input->activeGamepadMask & ~(1 << gamepad->gs_id);
-    commons_log_info("Input", "Controller %d removed", gamepad->gs_id);
-    LiSendMultiControllerEvent(gamepad->gs_id, activeGamepadMask, 0, 0, 0, 0, 0, 0, 0);
+    uint16_t activeGamepadMask =
+            stream_input_moonlight_active_mask(input) & (uint16_t) ~(1u << (unsigned) gamepad->gs_id);
+    commons_log_info("Input", "Controller %d removed (Moonlight mask 0x%x)", gamepad->gs_id, activeGamepadMask);
+    LiSendMultiControllerEvent(gamepad->gs_id, (short) activeGamepadMask, 0, 0, 0, 0, 0, 0, 0);
 }
 
 static void stream_input_send_unannounced_gamepads(stream_input_t *input) {
@@ -430,6 +464,11 @@ static void stream_input_send_unannounced_gamepads(stream_input_t *input) {
         if (gamepad == NULL) {
             continue;
         }
+#if defined(TARGET_WEBOS)
+        if (input->moonlightExcludedMask & (1u << gamepad->gs_id)) {
+            continue;
+        }
+#endif
         stream_input_send_gamepad_arrive(input, gamepad);
     }
 }
@@ -442,7 +481,7 @@ static void release_buttons(stream_input_t *input, app_gamepad_state_t *gamepad)
     gamepad->leftStickY = 0;
     gamepad->rightStickX = 0;
     gamepad->rightStickY = 0;
-    if (!stream_input_moonlight_gamepad_enabled(input)) {
+    if (!stream_input_gamepad_sends_moonlight(input, gamepad)) {
         return;
     }
     LiSendMultiControllerEvent(gamepad->gs_id, input->input->activeGamepadMask, gamepad->buttons, gamepad->leftTrigger,

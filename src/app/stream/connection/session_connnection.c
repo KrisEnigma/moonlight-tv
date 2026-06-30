@@ -60,6 +60,11 @@ static void connection_rumble(unsigned short controllerNumber, unsigned short lo
     if (!current_session) {
         return;
     }
+#if defined(TARGET_WEBOS)
+    if (current_session->input.moonlightExcludedMask & (1u << controllerNumber)) {
+        return;
+    }
+#endif
     app_input_gamepad_rumble(&current_session->app->input, controllerNumber, lowFreqMotor, highFreqMotor);
 }
 
@@ -68,6 +73,11 @@ static void connection_rumble_triggers(unsigned short controllerNumber, unsigned
     if (!current_session) {
         return;
     }
+#if defined(TARGET_WEBOS)
+    if (current_session->input.moonlightExcludedMask & (1u << controllerNumber)) {
+        return;
+    }
+#endif
     app_input_gamepad_rumble_triggers(&current_session->app->input, controllerNumber, leftTrigger, rightTrigger);
 }
 
@@ -75,6 +85,11 @@ static void connection_set_motion_event_state(uint16_t controllerNumber, uint8_t
     if (!current_session) {
         return;
     }
+#if defined(TARGET_WEBOS)
+    if (current_session->input.moonlightExcludedMask & (1u << controllerNumber)) {
+        return;
+    }
+#endif
     app_input_gamepad_set_motion_event_state(&current_session->app->input, controllerNumber, motionType, reportRateHz);
 }
 
@@ -82,6 +97,11 @@ static void connection_set_controller_led(uint16_t controllerNumber, uint8_t r, 
     if (!current_session) {
         return;
     }
+#if defined(TARGET_WEBOS)
+    if (current_session->input.moonlightExcludedMask & (1u << controllerNumber)) {
+        return;
+    }
+#endif
     app_input_gamepad_set_controller_led(&current_session->app->input, controllerNumber, r, g, b);
 }
 

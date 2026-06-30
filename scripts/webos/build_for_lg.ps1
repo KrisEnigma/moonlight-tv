@@ -29,12 +29,7 @@ Write-Host ""
 Write-Host "Iniciando build no WSL (Ubuntu)..." -ForegroundColor Green
 Write-Host ""
 
-wsl -e bash -c @"
-set -e
-cd '$WslPath'
-chmod +x scripts/webos/build_for_lg.sh
-./scripts/webos/build_for_lg.sh
-"@
+wsl -e bash -lc "cd '$WslPath' && export CI=1 && chmod +x scripts/webos/build_for_lg.sh && ./scripts/webos/build_for_lg.sh"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""

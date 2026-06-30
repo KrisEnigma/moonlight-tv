@@ -52,7 +52,7 @@ Hold the buttons together, then **release all at once** to trigger (same pattern
 - **Left stick** — scroll the page (vertical and horizontal, with acceleration)
 - **LT / RT** — left / right mouse button
 
-These combos work without opening the overlay. **HID Passthrough** disables standard Moonlight gamepad emulation, so hotkeys may not apply in that mode.
+These combos work without opening the overlay. Controllers **bridged via HID Passthrough** do not use Moonlight emulation; other paired controllers and these hotkeys still work normally.
 
 ### Compact mode (single line)
 
@@ -109,6 +109,23 @@ Turn on **Settings → Input → Virtual mouse**, then start or reconnect the st
 - Or open the **streaming overlay** and select **Virtual Mouse**.
 
 When active, use the right stick and triggers as described in [Gamepad hotkeys](#gamepad-hotkeys-during-streaming) above. Press **LB + RS** again to turn it off.
+
+## HID Passthrough (experimental)
+
+Bridge selected controllers to your PC as native HID devices via [CTM-USBIP](https://github.com/CTM-Bridge/CTM-USBIP), while other controllers keep standard Moonlight emulation. Enable in **Settings → Input**, then manage devices from the streaming overlay (**HID Devices**).
+
+- **Auto-Plugin** (per controller): when checked, the controller is bridged automatically at stream start and excluded from Moonlight; when unchecked, use **Plug in** / **Plug out** during streaming.
+- You can mix modes: one controller via HID Passthrough and another via Moonlight on the same session.
+
+Full setup (PC agent, supported pads, developer mode): **[webOS build guide — HID Passthrough](docs/BUILD_WEBOS.md#5-hid-passthrough-experimental)**.
+
+### DualSense (DS5) — controller audio
+
+> **Use TV / HDMI audio for game sound.** Controller speaker and 3.5 mm jack over HID Passthrough are experimental and often sound worse than HDMI.
+>
+> webOS Bluetooth pacing limits DS5 output reports (~100 Hz → ~62 Hz with jitter). Routing game audio to the controller can force **SBC over A2DP** instead of keeping audio on the TV. In the HID panel, leave **Audio output** on **Auto (game decides)** unless you specifically need sound on the pad.
+>
+> Optional [raw-ACL daemon](https://github.com/sh00bx/webos-ds5-raw-acl) on rooted/dev-mode TVs can improve haptics and controller audio — see the build guide.
 
 ## Build and installation
 

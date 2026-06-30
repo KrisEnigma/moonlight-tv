@@ -13,18 +13,28 @@ which ares-package || { echo "Error: ares-package not installed"; exit 1; }
 cd /build
 # Windows bind mounts can leave stale git submodule lock files in .git/modules.
 find .git/modules -name "*.lock" -delete 2>/dev/null || true
-git submodule sync --recursive
-git submodule update --init --recursive
+# The project is bind-mounted from the host with submodules already checked out.
+# Updating here fails when ss4s (or others) have local patches — skip by default.
+if [ "${DOCKER_SKIP_SUBMODULES:-1}" = "1" ] || [ -n "${CI}" ]; then
+    echo "Skipping git submodule update (using host checkout)."
+else
+    git submodule sync --recursive
+    git submodule update --init --recursive
+fi
 
 # Download SDK
 cd /tmp
-if [ ! -f arm-webos-linux-gnueabi_sdk-buildroot.tar.gz ]; then
-    echo "Downloading webOS SDK..."
-    curl -sL -O https://github.com/openlgtv/buildroot-nc4/releases/download/webos-b17b4cc/arm-webos-linux-gnueabi_sdk-buildroot.tar.gz
+if [ ! -d arm-webos-linux-gnueabi_sdk-buildroot ] || \
+   [ ! -f arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake ]; then
+    if [ ! -f arm-webos-linux-gnueabi_sdk-buildroot.tar.gz ]; then
+        echo "Downloading webOS SDK..."
+        curl -sL -O https://github.com/openlgtv/buildroot-nc4/releases/download/webos-b17b4cc/arm-webos-linux-gnueabi_sdk-buildroot.tar.gz
+    fi
+    echo "Extracting SDK..."
+    tar -xzf arm-webos-linux-gnueabi_sdk-buildroot.tar.gz
+    find arm-webos-linux-gnueabi_sdk-buildroot -type f \( -name '*.sh' -o -name 'relocate-sdk' \) -exec sed -i 's/\r$//' {} +
+    ./arm-webos-linux-gnueabi_sdk-buildroot/relocate-sdk.sh
 fi
-tar -xzf arm-webos-linux-gnueabi_sdk-buildroot.tar.gz
-find arm-webos-linux-gnueabi_sdk-buildroot -type f \( -name '*.sh' -o -name 'relocate-sdk' \) -exec sed -i 's/\r$//' {} +
-./arm-webos-linux-gnueabi_sdk-buildroot/relocate-sdk.sh
 
 cd /build
 SDK_ROOT=/tmp/arm-webos-linux-gnueabi_sdk-buildroot
@@ -39,6 +49,12 @@ if [ ! -x "${SDK_ROOT}/bin/arm-webos-linux-gnueabi-gcc" ]; then
 fi
 # Build outside the Windows bind mount: cmake try_compile breaks on NTFS/exFAT volumes.
 export CMAKE_BINARY_DIR=/tmp/aurora-webos-build
-rm -rf "${CMAKE_BINARY_DIR}"
-CI=1 sed 's/\r$//' ./scripts/webos/apply_ndl_low_latency.sh | bash
-CI=1 sed 's/\r$//' ./scripts/webos/easy_build.sh | bash -s -- -DCMAKE_BUILD_TYPE=Release
+if [ "${DOCKER_CLEAN_BUILD:-0}" = "1" ]; then
+    rm -rf "${CMAKE_BINARY_DIR}"
+fi
+export CI=1
+sed 's/\r$//' ./scripts/webos/apply_ndl_low_latency.sh | bash
+sed 's/\r$//' ./scripts/webos/easy_build.sh | bash -s -- -DCMAKE_BUILD_TYPE=Release
+
+mkdir -p dist
+find "${CMAKE_BINARY_DIR}" -maxdepth 3 -name '*.ipk' -exec cp -f {} dist/ \;

@@ -12,6 +12,10 @@
 #include "app_session.h"
 #include "backend/pcmanager/worker/worker.h"
 
+#if defined(TARGET_WEBOS)
+#include "hid_passthrough/hid_pt_gamepad_match.h"
+#endif
+
 int session_worker(session_t *session) {
     app_t *app = session->app;
     session_set_state(session, STREAMING_CONNECTING);
@@ -48,9 +52,15 @@ int session_worker(session_t *session) {
         surround_params = "642014523";
     }
 #endif
+    short gamepad_mask = app_input_gamepads_mask(&app->input);
+#if defined(TARGET_WEBOS)
+    if (session->config.hid_passthrough) {
+        session->input.moonlightExcludedMask = hid_pt_moonlight_excluded_mask_at_start(&app->input);
+        gamepad_mask &= (short) ~session->input.moonlightExcludedMask;
+    }
+#endif
     int ret = gs_start_app(client, server, &session->config.stream, appId, server->isGfe, session->config.sops,
-                           session->config.local_audio,
-                           session->config.hid_passthrough ? 0 : app_input_gamepads_mask(&app->input), surround_params);
+                           session->config.local_audio, gamepad_mask, surround_params);
     if (ret != GS_OK) {
         session_set_state(session, STREAMING_ERROR);
         const char *gs_error = NULL;

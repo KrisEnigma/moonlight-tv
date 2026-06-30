@@ -158,8 +158,10 @@ bool session_start_input(session_t *session) {
 #endif
     if (session->config.hid_passthrough) {
         hid_passthrough_manager_start(&session->hid_pt, session->server->serverInfo.address,
-                                      session->config.hid_passthrough_port,
-                                      session->config.hid_passthrough_autoplug);
+                                      session->config.hid_passthrough_port, true);
+        hid_passthrough_manager_set_stream_input(&session->hid_pt, &session->input);
+        hid_passthrough_manager_rescan(&session->hid_pt);
+        hid_passthrough_manager_reconcile(&session->hid_pt, &session->input);
     }
     session_input_started(&session->input);
     return true;
@@ -187,11 +189,14 @@ void session_ensure_hid_passthrough(session_t *session) {
         return;
     }
     if (hid_passthrough_manager_active(&session->hid_pt)) {
+        hid_passthrough_manager_set_stream_input(&session->hid_pt, &session->input);
         return;
     }
     hid_passthrough_manager_start(&session->hid_pt, session->server->serverInfo.address,
-                                  session->config.hid_passthrough_port,
-                                  session->config.hid_passthrough_autoplug);
+                                  session->config.hid_passthrough_port, true);
+    hid_passthrough_manager_set_stream_input(&session->hid_pt, &session->input);
+    hid_passthrough_manager_rescan(&session->hid_pt);
+    hid_passthrough_manager_reconcile(&session->hid_pt, &session->input);
 }
 
 void session_toggle_vmouse(session_t *session) {

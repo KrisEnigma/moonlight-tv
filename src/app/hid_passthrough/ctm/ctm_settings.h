@@ -36,6 +36,8 @@ typedef struct {
     unsigned int ds5_patch2_high_nibble;
     unsigned int ds5_patch2_low_nibble;
     bool composite_passthrough;   /* Flydigi: forward full USB composite to host */
+    bool block_bt_audio_sink;     /* prevent BlueZ from registering DS5 as A2DP sink */
+    bool auto_plugin;             /* auto-bridge via HID passthrough on next stream start */
 } tv_bridge_worker_settings_t;
 
 #endif /* CTM_SETTINGS_H */

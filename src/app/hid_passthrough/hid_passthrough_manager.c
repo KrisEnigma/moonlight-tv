@@ -4,6 +4,7 @@
 
 #include "ctm/ctm_state.h"
 #include "logging.h"
+#include "stream/input/session_input.h"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -23,6 +24,13 @@ static void hid_pt_sync_plugged_state(void) {
 void hid_passthrough_manager_init(hid_passthrough_manager_t *manager) {
     memset(manager, 0, sizeof(*manager));
     manager->port = HID_PT_DEFAULT_PORT;
+}
+
+void hid_passthrough_manager_set_stream_input(hid_passthrough_manager_t *manager,
+                                              stream_input_t *input) {
+    if (manager) {
+        manager->stream_input = input;
+    }
 }
 
 void hid_passthrough_manager_deinit(hid_passthrough_manager_t *manager) {
@@ -63,6 +71,7 @@ void hid_passthrough_manager_stop(hid_passthrough_manager_t *manager) {
     g_expanded_key_count = 0;
     autoplug_reset();
     hid_pt_sync_plugged_state();
+    manager->stream_input = NULL;
     manager->running = false;
 }
 
@@ -168,14 +177,20 @@ void hid_passthrough_manager_rescan(hid_passthrough_manager_t *manager) {
     hid_pt_sync_plugged_state();
 }
 
+void hid_passthrough_manager_reconcile(hid_passthrough_manager_t *manager,
+                                       stream_input_t *input) {
+    if (!manager || !manager->running) {
+        return;
+    }
+    hid_pt_autoplug_reconcile(input);
+}
+
 void hid_passthrough_manager_poll(hid_passthrough_manager_t *manager) {
     if (!manager || !manager->running) {
         return;
     }
     hid_passthrough_manager_rescan(manager);
-    if (manager->autoplug) {
-        hid_pt_autoplug_reconcile();
-    }
+    hid_pt_autoplug_reconcile(manager->stream_input);
 }
 
 #endif

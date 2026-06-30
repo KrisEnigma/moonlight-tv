@@ -70,6 +70,9 @@ typedef struct {
 
     /* Live UI settings update (DS sliders). NULL => ignored. */
     void (*set_settings)(ctm_controller_t *c, const tv_bridge_worker_settings_t *s);
+
+    /* Optional per-input-report hook (DS5 battery, etc.). NULL => none. */
+    void (*on_input_report)(ctm_controller_t *c, const uint8_t *data, size_t len);
 } ctm_controller_ops_t;
 
 /* Live bridging status — read-only snapshot for the UI status panel. */
@@ -79,6 +82,9 @@ typedef struct {
     unsigned long reports_in;    /* input reports forwarded to the host */
     unsigned long reports_out;   /* output reports written to the device */
     char last_event[96];         /* most recent controller log line */
+    uint8_t battery_level;       /* 0-10; 255 = unknown */
+    uint8_t battery_status;      /* 0=discharging, 1=charging, 2=full */
+    bool battery_valid;          /* true if updated within the last 5 s */
 } ctm_controller_status_t;
 
 /* --- lifecycle (controller_common.c) ----------------------------------------
@@ -92,6 +98,9 @@ void ctm_controller_set_enum_payload(ctm_controller_t *c, const uint8_t *payload
 void ctm_controller_set_settings(ctm_controller_t *c, const tv_bridge_worker_settings_t *s);
 void ctm_controller_get_settings(ctm_controller_t *c, tv_bridge_worker_settings_t *out);
 void ctm_controller_get_status(ctm_controller_t *c, ctm_controller_status_t *out);
+int  ctm_controller_write_feature(ctm_controller_t *c, const uint8_t *feature, size_t len);
+void ctm_controller_update_battery(ctm_controller_t *c, uint8_t level, uint8_t status);
+void ctm_controller_update_battery_raw(ctm_controller_t *c, uint8_t raw);
 void ctm_controller_destroy(ctm_controller_t *c);
 
 /* Register a sink for controller log lines (e.g. the app's on-screen console).

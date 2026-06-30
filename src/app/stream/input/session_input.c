@@ -21,6 +21,7 @@
 #include "stream/session.h"
 #include "stream/session_priv.h"
 #include "session_evmouse.h"
+#include "input/app_input.h"
 
 void session_input_init(stream_input_t *input, session_t *session, app_input_t *app_input,
                         const session_config_t *config) {
@@ -38,6 +39,7 @@ void session_input_init(stream_input_t *input, session_t *session, app_input_t *
     input->pointerGestureStartY = 0;
     input->view_only = config->view_only;
     input->hid_passthrough = config->hid_passthrough;
+    input->moonlightExcludedMask = 0;
     input->stick_deadzone = config->stick_deadzone;
     input->no_sdl_mouse = config->hardware_mouse;
 #if FEATURE_INPUT_EVMOUSE
@@ -68,14 +70,16 @@ void session_input_interrupt(stream_input_t *input) {
 
 void session_input_started(stream_input_t *input) {
     input->started = true;
-    if (input->hid_passthrough) {
-        return;
-    }
     for (int i = 0, j = app_input_get_max_gamepads(input->input); i < j; ++i) {
         app_gamepad_state_t *gamepad = app_input_gamepad_state_by_index(input->input, i);
         if (gamepad == NULL) {
             continue;
         }
+#if defined(TARGET_WEBOS)
+        if (input->moonlightExcludedMask & (1u << gamepad->gs_id)) {
+            continue;
+        }
+#endif
         stream_input_send_gamepad_arrive(input, gamepad);
     }
 }
@@ -84,6 +88,7 @@ void session_input_stopped(stream_input_t *input) {
     pointer_gesture_reset(input);
     input->started = false;
     input->announcedGamepadMask = 0;
+    input->moonlightExcludedMask = 0;
     input->remoteOkPressed = false;
     input->remoteOkPressedAt = 0;
     input->remoteOkModifiers = 0;

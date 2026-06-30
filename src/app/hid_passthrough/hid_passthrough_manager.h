@@ -9,11 +9,14 @@
 #define HID_PT_PATH_LEN 64
 #define HID_PT_DEFAULT_PORT 48054
 
+struct stream_input_t;
+
 struct hid_passthrough_manager {
     bool running;
     bool autoplug;
     char host[128];
     int port;
+    struct stream_input_t *stream_input;
 };
 
 typedef struct hid_passthrough_manager hid_passthrough_manager_t;
@@ -40,11 +43,14 @@ void hid_passthrough_manager_stop(hid_passthrough_manager_t *manager);
 
 bool hid_passthrough_manager_active(const hid_passthrough_manager_t *manager);
 
-/* Rescan attached HID devices and, when autoplug is enabled, bridge any connected
- * game controller (DS5/DS4/Xbox/puck) that is not already plugged. Idempotent and
- * safe to call on a cadence to pick up controllers connected mid-stream (e.g. a
- * DualSense paired over Bluetooth while a game is running). LVGL-thread only. */
+void hid_passthrough_manager_set_stream_input(hid_passthrough_manager_t *manager,
+                                              struct stream_input_t *input);
+
+/* Rescan + per-device auto-plug reconcile. LVGL/main thread only. */
 void hid_passthrough_manager_poll(hid_passthrough_manager_t *manager);
+
+void hid_passthrough_manager_reconcile(hid_passthrough_manager_t *manager,
+                                        struct stream_input_t *input);
 
 int hid_passthrough_manager_device_count(hid_passthrough_manager_t *manager);
 
@@ -100,7 +106,22 @@ static inline bool hid_passthrough_manager_active(const hid_passthrough_manager_
     return false;
 }
 
+static inline void hid_passthrough_manager_set_stream_input(hid_passthrough_manager_t *manager,
+                                                            void *input) {
+    (void) manager;
+    (void) input;
+}
+
 static inline void hid_passthrough_manager_poll(hid_passthrough_manager_t *manager) {
+    (void) manager;
+}
+
+static inline void hid_passthrough_manager_reconcile(hid_passthrough_manager_t *manager, void *input) {
+    (void) manager;
+    (void) input;
+}
+
+static inline void hid_passthrough_manager_rescan(hid_passthrough_manager_t *manager) {
     (void) manager;
 }
 

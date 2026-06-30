@@ -80,8 +80,8 @@ static lv_obj_t *create_obj(lv_fragment_t *self, lv_obj_t *container) {
                                             &app_configuration->hid_passthrough, false);
     lv_obj_add_event_cb(hid_pt_toggle, on_hid_passthrough_changed, LV_EVENT_VALUE_CHANGED, pane);
     pref_desc_label(view,
-                    locstr("Enabling HID Passthrough disables standard Moonlight controller emulation to prevent "
-                           "duplicate inputs."),
+                    locstr("Bridge selected controllers to the PC as native HID devices. "
+                           "Other controllers keep using standard Moonlight emulation."),
                     false);
 
     pane->deadzone_label = pref_title_label(view, locstr("Analog stick deadzone"));
@@ -140,16 +140,7 @@ static void on_deadzone_changed(lv_event_t *e) {
 }
 
 static void hid_passthrough_ui_update(input_pane_t *pane) {
-    bool disabled = app_configuration->hid_passthrough;
-    if (disabled) {
-        lv_obj_add_state(pane->deadzone_slider, LV_STATE_DISABLED);
-        lv_obj_add_state(pane->deadzone_label, LV_STATE_DISABLED);
-        lv_obj_add_state(pane->swap_abxy_toggle, LV_STATE_DISABLED);
-    } else {
-        lv_obj_clear_state(pane->deadzone_slider, LV_STATE_DISABLED);
-        lv_obj_clear_state(pane->deadzone_label, LV_STATE_DISABLED);
-        lv_obj_clear_state(pane->swap_abxy_toggle, LV_STATE_DISABLED);
-    }
+    (void) pane;
 }
 
 static void on_hid_passthrough_changed(lv_event_t *e) {

@@ -175,6 +175,32 @@ static int ds5_patch_output(ctm_controller_t *c, uint8_t *data, size_t *len_io)
     return 0;
 }
 
+static int ds5_on_plug_init(ctm_controller_t *c, ctm_transport_t *t)
+{
+    (void)t;
+    tv_bridge_worker_settings_t s;
+    ctm_controller_get_settings(c, &s);
+    if (!s.block_bt_audio_sink) {
+        return 0;
+    }
+    /* Request DS5 BT HID-only mode: report 0x05, byte[1] bit4 = disable A2DP. */
+    uint8_t feature[64];
+    memset(feature, 0, sizeof(feature));
+    feature[0] = 0x05;
+    feature[1] = 0x18;
+    return ctm_controller_write_feature(c, feature, sizeof(feature));
+}
+
+static void ds5_on_input_report(ctm_controller_t *c, const uint8_t *data, size_t len)
+{
+    /* DS5 BT input 0x31: payload starts at byte 2; status[0] (battery) is at
+     * offset 52 within the payload (Linux hid-playstation dualsense_input_report). */
+    if (!c || !data || len < 55 || data[0] != 0x31) {
+        return;
+    }
+    ctm_controller_update_battery_raw(c, data[54]);
+}
+
 const ctm_controller_ops_t ctm_controller_ds5_ops = {
     .kind = "ds5",
     .needs_host_config = true,
@@ -183,7 +209,8 @@ const ctm_controller_ops_t ctm_controller_ds5_ops = {
     .raw_acl_output = true,
     .matches = ds5_matches,
     .select_node = NULL,
-    .on_plug_init = NULL,
+    .on_plug_init = ds5_on_plug_init,
     .patch_output = ds5_patch_output,
     .set_settings = NULL,   /* live values read via get_settings in patch_output */
+    .on_input_report = ds5_on_input_report,
 };

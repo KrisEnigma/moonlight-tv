@@ -247,10 +247,13 @@ HID Passthrough sends raw controller HID reports from the TV to **[CTM-USBIP](ht
 2. In Aurora: **Settings → Input → Enable HID Passthrough (Experimental)**.
 3. Start a stream. During streaming, open the status overlay (BACK / gamepad combo) and choose **HID Devices** (next to Virtual Mouse).
 4. In the device list, tap **Plug in** on each gamepad you want bridged to CTM-USBIP on the PC. Use **Plug out** to stop bridging without unpairing the controller from the TV.
+5. Optional: enable **Auto-Plugin** on a controller so it is bridged automatically on the next stream start (and excluded from Moonlight until you plug it out).
 
-Video, audio, keyboard, and mouse still use Moonlight; **only plugged HID gamepads** are sent to CTM-USBIP.
+Video, audio, keyboard, and mouse still use Moonlight; **only plugged (or auto-plugged) HID gamepads** are sent to CTM-USBIP.
 
-When HID Passthrough is enabled, Aurora does **not** send Moonlight gamepad events (avoids duplicate controllers on the host).
+Controllers with HID bridging active are **excluded from Moonlight gamepad emulation** for that slot only; other controllers keep using Moonlight (mixed mode).
+
+> **DS5 controller audio:** prefer **HDMI / TV speakers** for game sound. Speaker or headphone jack via passthrough is experimental — webOS BT pacing, SBC/A2DP routing, and the PC→TV→BT chain often cause crackling or reduced quality. Keep **Audio output → Auto** in the HID panel unless you need pad audio; see [DualSense raw ACL](#dualsense-ds5--optional-raw-acl-output-webos) for optional improvements.
 
 ### Supported controllers
 

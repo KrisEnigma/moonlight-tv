@@ -732,6 +732,7 @@ logical_device_t *find_or_add_logical_device(logical_result_t *logical, const de
     snprintf(item->mac, sizeof(item->mac), "%s", dev->mac);
     snprintf(item->usb_busid, sizeof(item->usb_busid), "%s", dev->usb_busid);
     item->plugged = plug_key_is_set(item->key);
+    item->moonlight_gs_id = -1;
     item->device_indices[item->device_count++] = scan_index;
     return item;
 }

@@ -1,6 +1,10 @@
 #include "app_settings.h"
 #include "config.h"
 
+#if defined(TARGET_WEBOS)
+#include "hid_passthrough/hid_pt_device_prefs.h"
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -137,6 +141,10 @@ void settings_initialize(app_settings_t *config, char *conf_dir) {
     config->hid_passthrough = false;
     config->hid_passthrough_port = 48054;
     config->hid_passthrough_autoplug = true;
+
+#if defined(TARGET_WEBOS)
+    hid_pt_prefs_init();
+#endif
 
 #if defined(TARGET_WEBOS)
     settings_apply_ntsc_preset_refresh(config, config->stream.fps);
@@ -282,6 +290,11 @@ int find_ch_idx_by_value(const char *value) {
 }
 
 static int settings_parse(app_settings_t *config, const char *section, const char *name, const char *value) {
+#if defined(TARGET_WEBOS)
+    if (hid_pt_prefs_ini_handler(section, name, value)) {
+        return 1;
+    }
+#endif
     if (INI_FULL_MATCH("streaming", "width")) {
         set_int(&config->stream.width, value);
     } else if (INI_FULL_MATCH("streaming", "height")) {

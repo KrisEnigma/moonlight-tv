@@ -151,6 +151,12 @@ struct ctm_controller {
     volatile unsigned long st_coalesced;   /* input reports dropped by per-burst coalescing */
     char st_last_event[96];
 
+    uint8_t battery_level;
+    uint8_t battery_status;
+    uint64_t battery_updated_us;
+    uint8_t battery_raw_last;
+    uint8_t battery_raw_stable;
+
     uint8_t *enum_payload;           /* composite: forwarded enumeration (CTMB_MSG_ENUM) */
     int enum_payload_len;
     comp_iface_t comp[15];           /* composite: the non-primary HID interfaces */
@@ -279,6 +285,62 @@ static void request_full_bt_mode(int fd)
     if (ioctl(fd, HIDIOCGFEATURE(sizeof(feature)), feature) < 0) {
         fprintf(stderr, "controller: feature 0x05 failed errno=%d\n", errno);
     }
+}
+
+int ctm_controller_write_feature(ctm_controller_t *c, const uint8_t *feature, size_t len)
+{
+    if (!c || c->hid_fd < 0 || !feature || len == 0 || len > 4096) {
+        return -1;
+    }
+    uint8_t buf[4096];
+    memcpy(buf, feature, len);
+    pthread_mutex_lock(&c->hid_mutex);
+    int rc = ioctl(c->hid_fd, HIDIOCSFEATURE((int)len), buf);
+    pthread_mutex_unlock(&c->hid_mutex);
+    return rc >= 0 ? 0 : -1;
+}
+
+void ctm_controller_update_battery(ctm_controller_t *c, uint8_t level, uint8_t status)
+{
+    if (!c) return;
+    __atomic_store_n(&c->battery_level, level, __ATOMIC_RELEASE);
+    __atomic_store_n(&c->battery_status, status, __ATOMIC_RELEASE);
+    __atomic_store_n(&c->battery_updated_us, now_us(), __ATOMIC_RELEASE);
+}
+
+void ctm_controller_update_battery_raw(ctm_controller_t *c, uint8_t raw)
+{
+    if (!c) return;
+    if (raw == c->battery_raw_last) {
+        if (c->battery_raw_stable < 255) {
+            c->battery_raw_stable++;
+        }
+    } else {
+        c->battery_raw_last = raw;
+        c->battery_raw_stable = 1;
+    }
+    /* Require three identical samples before updating (filters touchpad noise). */
+    if (c->battery_raw_stable < 3) {
+        return;
+    }
+
+    uint8_t level  = raw & 0x0Fu;
+    uint8_t charge = (raw >> 4) & 0x0Fu;
+    if (level > 10) {
+        return;
+    }
+    uint8_t status = 0;
+    if (charge == 1) {
+        status = 1;
+    } else if (charge == 2) {
+        status = 2;
+        if (level < 10) {
+            level = 10;
+        }
+    } else if (charge != 0) {
+        return;
+    }
+    ctm_controller_update_battery(c, level, status);
 }
 
 /* CRC32 (reflected, poly 0xedb88320) step. When: ctm_bt_sign_output only. */
@@ -647,7 +709,6 @@ static void ds5_audio_plc(ctm_controller_t *c, uint8_t *data, size_t len)
     size_t limit = len - 4;
     size_t pos = 2;
     int audio_present = 0;
-    size_t haptic_pos = 0;
     size_t blocks_end = 2;
     while (pos + 2 <= limit) {
         uint8_t id = data[pos];
@@ -666,8 +727,6 @@ static void ds5_audio_plc(ctm_controller_t *c, uint8_t *data, size_t len)
                 c->plc_audio_len = (uint16_t)blen;
                 c->plc_have = 1;
             }
-        } else if (id == 0x92) {
-            haptic_pos = pos;
         }
         pos += blen;
         blocks_end = pos;
@@ -677,7 +736,7 @@ static void ds5_audio_plc(ctm_controller_t *c, uint8_t *data, size_t len)
         return;
     }
     c->st_audio_omit++;
-    if (!c->plc_have || haptic_pos == 0 || c->plc_repeat >= 3) {
+    if (!c->plc_have || c->plc_repeat >= 12) {
         c->st_audio_capdrop++;
         return;
     }
@@ -687,8 +746,12 @@ static void ds5_audio_plc(ctm_controller_t *c, uint8_t *data, size_t len)
         c->st_audio_capdrop++;
         return;
     }
-    memmove(&data[haptic_pos + al], &data[haptic_pos], blocks_end - haptic_pos);
-    memcpy(&data[haptic_pos], c->plc_audio, al);
+    /* Append concealed audio after the last known block, not before haptics. */
+    memcpy(&data[blocks_end], c->plc_audio, al);
+    if (blocks_end + al + 2 <= limit) {
+        data[blocks_end + al]     = 0x00;
+        data[blocks_end + al + 1] = 0x00;
+    }
     ctm_bt_sign_output(data, len);
     c->plc_repeat++;
     c->st_audio_conceal++;
@@ -1387,6 +1450,9 @@ static void *input_thread_main(void *arg)
                 c->stop = 1;
                 break;
             }
+            if (c->ops->on_input_report) {
+                c->ops->on_input_report(c, coal_buf[i], coal_len[i]);
+            }
             c->st_reports_in++;
         }
         if (drained > coal_n) c->st_coalesced += (unsigned long)(drained - coal_n);
@@ -1618,6 +1684,11 @@ static void run_session(ctm_controller_t *c, const ctmb_device_caps_t *caps,
             int rdy_ = 0;
             ds5_acl_tx_stats(c->acl_tx, &ij_, &dp_, &rdy_);
             if (rdy_ && eff_pace_us > 8000) eff_pace_us = 8000;
+        } else if (eff_pace_us > 8000) {
+            /* hidraw path: tighten to 8 ms (~125/s) to stay above DS5's 100 Hz audio
+             * clock. The hidraw write blocks on BT slot anyway, so over-scheduling
+             * wastes nothing — the kernel serializes for us. */
+            eff_pace_us = 8000;
         }
         drain_paced(c, paced_q, &paced_head, &paced_count, &next_paced_us, eff_pace_us);
         if (c->plc_enabled) {
@@ -1932,6 +2003,11 @@ void ctm_controller_get_status(ctm_controller_t *c, ctm_controller_status_t *out
     pthread_mutex_unlock(&c->status_mutex);
     out->reports_in = c->st_reports_in;
     out->reports_out = c->st_reports_out;
+    uint64_t now = now_us();
+    uint64_t upd = __atomic_load_n(&c->battery_updated_us, __ATOMIC_ACQUIRE);
+    out->battery_level  = __atomic_load_n(&c->battery_level,  __ATOMIC_ACQUIRE);
+    out->battery_status = __atomic_load_n(&c->battery_status, __ATOMIC_ACQUIRE);
+    out->battery_valid  = (upd != 0 && (now - upd) < 5000000ull);
 }
 
 /* Free an idle (already plugged-out) controller. When: the device is removed
