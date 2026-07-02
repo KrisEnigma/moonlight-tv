@@ -160,7 +160,7 @@ static void network_test_timer_cb(lv_timer_t *timer) {
                  locstr("Network speed test could not gather enough data."),
                  locstr("Check your connection and try again."));
     } else {
-        /* Convert to Mbps and apply a ~20% safety margin */
+        /* Converter para Mbps e aplicar margem de segurança de ~20% */
         float measuredMbps = (float) measuredBps / 1000000.0f;
         float recommendedMbps = measuredMbps * 0.8f;
         snprintf(body, sizeof(body),

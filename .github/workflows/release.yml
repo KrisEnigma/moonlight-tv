@@ -46,6 +46,19 @@ jobs:
         with:
           build-type: RelWithDebInfo
 
+      - name: Validate Homebrew Manifest Against Schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST_FILE=$(ls dist/*.manifest.json)
+          echo "Validating ${MANIFEST_FILE}"
+          curl -sSL -o /tmp/HomebrewPackageManifest.schema.json \
+            https://raw.githubusercontent.com/webosbrew/docs/main/schemas/HomebrewPackageManifest.schema.json
+          npx --yes ajv-cli@5 validate \
+            -s /tmp/HomebrewPackageManifest.schema.json \
+            -d "${MANIFEST_FILE}" \
+            --strict=false
+
       - name: Create Release (webOS)
         id: create_release_webos
         uses: ncipollo/release-action@v1

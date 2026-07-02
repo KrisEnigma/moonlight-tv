@@ -16,7 +16,7 @@ endif ()
 
 execute_process(COMMAND ${GEN_MANIFEST} -p "${CPACK_PACKAGE_DIRECTORY}/${CPACK_PACKAGE_FILE_NAME}.ipk"
         -o "${CPACK_PACKAGE_DIRECTORY}/${CPACK_PACKAGE_NAME}.manifest.json"
-        -i "https://raw.githubusercontent.com/GuiDev1994/moonlight-tv/main/deploy/webos/icon.png"
-        -l "https://github.com/GuiDev1994/moonlight-tv"
+        -i "https://raw.githubusercontent.com/GuiDev1994/aurora-tv/main/deploy/webos/icon.png"
+        -l "https://github.com/GuiDev1994/aurora-tv"
         COMMAND_ERROR_IS_FATAL ANY
 )

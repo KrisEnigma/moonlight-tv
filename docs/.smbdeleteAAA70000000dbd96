@@ -1,0 +1,30 @@
+# Aurora no webOS Homebrew (Homebrew Channel)
+
+O catálogo oficial é o repositório **[webosbrew/apps-repo](https://github.com/webosbrew/apps-repo)** (site: [repo.webosbrew.org](https://repo.webosbrew.org/)). Guia oficial de submissão: [Submit Application](https://repo.webosbrew.org/submit).
+
+## O que precisas
+
+1. **Release no GitHub** com estes ficheiros (o CI de *Release* já os gera quando `webosbrew-gen-manifest` está instalado):
+   - `com.aurora.gamestream_*_arm.ipk`
+   - `com.aurora.gamestream.manifest.json`  
+   URL usada pelo catálogo (sempre a última release):  
+   `https://github.com/GuiDev1994/aurora-tv/releases/latest/download/com.aurora.gamestream.manifest.json`
+
+2. **Ícones** em `deploy/webos/` no branch `main` do teu repo (`icon.png`, `icon_large.png`, etc.), para o `iconUri` do YAML e do `AresPackage.cmake` funcionarem.
+
+3. **Ficheiro YAML** já preparado neste projeto:  
+   [`deploy/webosbrew/com.aurora.gamestream.yml`](../deploy/webosbrew/com.aurora.gamestream.yml)
+
+## Passos para submeter
+
+1. Faz **fork** de [webosbrew/apps-repo](https://github.com/webosbrew/apps-repo).
+2. Copia `com.aurora.gamestream.yml` para a pasta **`packages/`** do fork (mesmo nome de ficheiro).
+3. Confirma que o link **manifestUrl** abre o JSON da tua última release (navegador ou `curl`).
+4. Abre um **Pull Request** para `webosbrew/apps-repo` com um título claro, por exemplo: *Add Aurora (com.aurora.gamestream)*.
+5. Aguarda revisão da equipa webOS Homebrew.
+
+## Manutenção
+
+Cada nova **tag/release** que publiques com `.ipk` + `.manifest.json` atualiza o que os utilizadores obtêm via `releases/latest/download/…` — não é preciso alterar o YAML no apps-repo **enquanto** o nome do ficheiro `com.aurora.gamestream.manifest.json` se mantiver.
+
+Se mudares o **app id** ou o nome do manifest, atualiza o YAML no apps-repo noutro PR.
