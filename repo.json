@@ -3,7 +3,7 @@
     {
       "id": "com.aurora.gamestream",
       "title": "Aurora",
-      "shortDescription": "<p><b>GameStream</b> client for LG webOS.</p>Paragraph test 1<p></p><p>Paragraph test 2</p><p>Paragraph test 3</p>",
+      "shortDescription": "GameStream client for LG WebOS.",
       "fullDescriptionUrl": "https://raw.githubusercontent.com/KrisEnigma/aurora-tv/main/README.md",
       "iconUri": "https://raw.githubusercontent.com/GuiDev1994/aurora-tv/main/deploy/webos/icon_large.png",
       "manifestUrl": "https://github.com/KrisEnigma/aurora-tv/releases/latest/download/com.aurora.gamestream.manifest.json"
