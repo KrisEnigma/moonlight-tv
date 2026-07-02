@@ -3,7 +3,7 @@
     {
       "id": "com.aurora.gamestream",
       "title": "Aurora",
-      "shortDescription": "<p><b>GameStream</b> client for LG webOS.</p>",
+      "shortDescription": "<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3><p>Paragraph test with <b>bold</b>, <strong>strong</strong>, <i>italic</i>, <em>em</em>, <u>underline</u>, <s>strikethrough</s>, <mark>marked</mark>, <sub>subscript</sub> and <sup>superscript</sup>.</p><p>Line one<br>Line two after a line break.</p><p>Inline styled <span style=\"color:red\">red text</span> and <span style=\"font-size:1.5em\">bigger text</span>.</p><p>A link: <a href=\"https://github.com/KrisEnigma/aurora-tv\">Aurora on GitHub</a></p><ul><li>Unordered item 1</li><li>Unordered item 2</li></ul><ol><li>Ordered item 1</li><li>Ordered item 2</li></ol><blockquote>This is a blockquote.</blockquote><p>Inline <code>code sample</code> and a block below:</p><pre>preformatted text block</pre><hr><table border=\"1\"><tr><th>Col A</th><th>Col B</th></tr><tr><td>1</td><td>2</td></tr></table><p>Image test:</p><img src=\"https://raw.githubusercontent.com/GuiDev1994/aurora-tv/main/deploy/webos/icon_large.png\" width=\"64\" height=\"64\"><p>Div/span wrapper test: <div>div content</div></p><p>Forbidden-tag test (should be stripped): <style>body{color:red}</style><button>button</button><input type=\"text\"><form>form</form></p>",
       "iconUri": "https://raw.githubusercontent.com/GuiDev1994/aurora-tv/main/deploy/webos/icon_large.png",
       "manifestUrl": "https://github.com/KrisEnigma/aurora-tv/releases/latest/download/com.aurora.gamestream.manifest.json"
     }
