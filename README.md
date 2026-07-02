@@ -129,9 +129,10 @@ Full setup (PC agent, supported pads, developer mode): **[webOS build guide — 
 
 ## Build and installation
 
-- **[webOS build](docs/BUILD_WEBOS.md)** — developer mode, Docker/WSL, manual IPK install.
-- [Homebrew catalog](docs/WEBOS_HOMEBREW.md) — publishing to [webosbrew/apps-repo](https://github.com/webosbrew/apps-repo). Every tagged release automatically publishes a schema-compliant manifest at a stable URL:
-  `https://github.com/GuiDev1994/aurora-tv/releases/latest/download/com.aurora.gamestream.manifest.json`
+- [webOS Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel) — add this repo link: `https://raw.githubusercontent.com/GuiDev1994/aurora-tv/main/repo.json`
+- [Device Manager app](https://github.com/webosbrew/dev-manager-desktop) — install the latest .ipk directly from [Releases](https://github.com/GuiDev1994/aurora-tv/releases)
+- [webOS TV CLI tools](https://webostv.developer.lge.com/develop/tools/cli-installation) — ares-install com.aurora.gamestream_*_arm.ipk (see [webOS build guide](docs/BUILD_WEBOS.md) for CLI setup)
+- Submitting to the official [webosbrew/apps-repo](https://github.com/webosbrew/apps-repo) catalog: see [docs/WEBOS_HOMEBREW.md](docs/WEBOS_HOMEBREW.md)
 
 ## Credits
 
