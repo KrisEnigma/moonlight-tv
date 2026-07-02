@@ -5,7 +5,7 @@
       "title": "Aurora",
       "shortDescription": "GameStream client for LG webOS. Stream from your PC with Sunshine or NVIDIA GameStream at up to 4K 120Hz HDR.",
       "iconUri": "https://raw.githubusercontent.com/GuiDev1994/aurora-tv/main/deploy/webos/icon_large.png",
-      "manifestUrl": "https://github.com/GuiDev1994/aurora-tv/releases/latest/download/com.aurora.gamestream.manifest.json"
+      "manifestUrl": "https://github.com/KrisEnigma/aurora-tv/releases/latest/download/com.aurora.gamestream.manifest.json"
     }
   ]
 }
